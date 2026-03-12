@@ -216,7 +216,8 @@ export default function DraftRoom() {
   const renderDraftBoard = () => {
     if (!draft || !league) return null;
 
-    const rounds = league.roster_size;
+    const actualRounds = picks.length > 0 ? Math.max(...picks.map(p => p.round)) : 0;
+    const rounds = Math.max(league.roster_size, Math.max(actualRounds, draft.current_round));
     const numTeams = teams.length;
     const teamOrder = draft.draft_order;
 
@@ -394,7 +395,7 @@ export default function DraftRoom() {
 
       {/* Draft Content */}
       {view === 'board' ? (
-        <div className="flex-1 bg-surface-800/40 border border-surface-700/50 rounded-xl overflow-hidden focus:outline-none">
+        <div className="flex-1 min-h-0 bg-surface-800/40 border border-surface-700/50 rounded-xl overflow-hidden focus:outline-none">
            {renderDraftBoard()}
         </div>
       ) : (

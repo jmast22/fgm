@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { draftService } from '../../services/draftService'
 import type { Draft, DraftPick } from '../../services/draftService'
 import type { League, Team } from '../../services/leagueService'
+import { useAuth } from '../../context/AuthContext'
 
 interface DraftResultsProps {
   league: League;
@@ -14,6 +15,47 @@ export default function DraftResults({ league, teams, onBack }: DraftResultsProp
   const [picks, setPicks] = useState<DraftPick[]>([])
   const [loading, setLoading] = useState(true)
   const [view, setView] = useState<'board' | 'list'>('board')
+
+  const { user } = useAuth()
+  const isCommish = user?.id === league.commissioner_id
+
+  const [editingPick, setEditingPick] = useState<{ id?: string, team_id: string, round: number, pick_number: number, golfer_id?: string } | null>(null)
+  const [availableGolfers, setAvailableGolfers] = useState<any[]>([])
+  const [search, setSearch] = useState('')
+  const [savingEdit, setSavingEdit] = useState(false)
+
+  const handleEditClick = async (pickInfo: { id?: string, team_id: string, round: number, pick_number: number, golfer_id?: string }) => {
+    if (!isCommish) return
+    setEditingPick(pickInfo)
+    try {
+      if (draft) {
+        const golfers = await draftService.getAvailableGolfers(draft.id)
+        setAvailableGolfers(golfers)
+      }
+    } catch (err: any) {
+      alert('Failed to load available golfers: ' + err.message)
+    }
+  }
+
+  const handleSaveEdit = async (newGolferId: string) => {
+    if (!editingPick || !draft) return
+    setSavingEdit(true)
+    try {
+      if (editingPick.id) {
+        await draftService.editDraftPick(editingPick.id, editingPick.team_id, editingPick.golfer_id || '', newGolferId)
+      } else {
+        await draftService.makePick(draft.id, editingPick.team_id, newGolferId, editingPick.round, editingPick.pick_number)
+      }
+      const p = await draftService.getDraftPicks(draft.id)
+      setPicks(p)
+      setEditingPick(null)
+      setSearch('')
+    } catch (err: any) {
+      alert('Failed to save pick edit: ' + err.message)
+    } finally {
+      setSavingEdit(false)
+    }
+  }
 
   useEffect(() => {
     async function loadResults() {
@@ -37,7 +79,8 @@ export default function DraftResults({ league, teams, onBack }: DraftResultsProp
   if (!draft) return <div className="p-12 text-center text-surface-400">No draft data found.</div>
 
   const renderBoard = () => {
-    const rounds = league.roster_size;
+    const actualRounds = picks.length > 0 ? Math.max(...picks.map(p => p.round)) : 0;
+    const rounds = Math.max(league.roster_size, actualRounds);
     const numTeams = teams.length;
     const teamOrder = draft.draft_order;
 
@@ -80,13 +123,35 @@ export default function DraftResults({ league, teams, onBack }: DraftResultsProp
                       </div>
                       
                       {pick ? (
-                        <div>
-                          <div className="text-[11px] font-bold text-primary-400 leading-tight uppercase line-clamp-2">
-                             {(pick as any).golfer?.name}
+                        <div 
+                          className={isCommish ? "cursor-pointer group relative bg-surface-800/50 p-1.5 -m-1.5 rounded" : ""}
+                          onClick={() => handleEditClick(pick)}
+                        >
+                          <div className={`text-[11px] font-bold leading-tight uppercase line-clamp-2 ${isCommish ? 'text-surface-100 group-hover:text-primary-400 transition-colors' : 'text-primary-400'}`}>
+                             {(pick as any).golfer?.name || '⚠️ BLANK SLOT'}
                           </div>
+                          {isCommish && (
+                            <div className="absolute -top-3 -right-2 hidden group-hover:flex items-center justify-center w-5 h-5 bg-primary-600 rounded-full text-surface-900 text-[10px] shadow-lg">
+                              ✎
+                            </div>
+                          )}
                         </div>
                       ) : (
-                        <div className="h-4 bg-surface-700/20 rounded animate-pulse w-3/4"></div>
+                        <div 
+                          className={`h-4 rounded w-full ${isCommish ? 'bg-primary-500/10 border border-primary-500/20 text-[8px] flex items-center justify-center text-primary-500/50 uppercase font-bold cursor-pointer hover:bg-primary-500/20 hover:text-primary-400 transition-colors' : 'bg-surface-700/20 animate-pulse w-3/4'}`}
+                          title={isCommish ? "Click to add a missing pick" : "Future Pick"}
+                          onClick={() => {
+                            if (isCommish) {
+                              handleEditClick({
+                                team_id: teamId,
+                                round: roundNum,
+                                pick_number: pickNumber
+                              })
+                            }
+                          }}
+                        >
+                           {isCommish ? 'ADD PICK' : ''}
+                        </div>
                       )}
                     </div>
                   );
@@ -105,14 +170,21 @@ export default function DraftResults({ league, teams, onBack }: DraftResultsProp
         {picks.map(pick => {
           const team = teams.find(t => t.id === pick.team_id)
           return (
-            <div key={pick.id} className="p-4 flex items-center justify-between hover:bg-surface-800/30 transition-colors">
+            <div 
+              key={pick.id} 
+              onClick={() => isCommish && handleEditClick(pick)}
+              className={`p-4 flex items-center justify-between transition-colors ${isCommish ? 'cursor-pointer hover:bg-surface-800/50' : 'hover:bg-surface-800/30'}`}
+            >
               <div className="flex items-center gap-4">
                 <div className="w-12 text-center text-surface-500 font-mono text-xs">
                   {pick.round}.{pick.pick_number}
                 </div>
                 <div>
                   <div className="font-bold text-surface-100">{team?.team_name}</div>
-                  <div className="text-primary-400 text-sm font-medium">{(pick as any).golfer?.name}</div>
+                  <div className={`text-sm font-medium ${isCommish ? 'text-surface-300' : 'text-primary-400'}`}>
+                    {(pick as any).golfer?.name || <span className="text-orange-400">⚠️ Blank Slot</span>}
+                    {isCommish && <span className="ml-2 text-[10px] bg-primary-500/20 text-primary-400 px-1.5 py-0.5 rounded uppercase tracking-wider font-bold">Edit</span>}
+                  </div>
                 </div>
               </div>
               <div className="text-[10px] text-surface-600 uppercase font-black tracking-widest">
@@ -162,6 +234,68 @@ export default function DraftResults({ league, teams, onBack }: DraftResultsProp
       <div className="bg-surface-900/40 border border-surface-700/50 rounded-2xl overflow-hidden">
         {view === 'board' ? renderBoard() : renderList()}
       </div>
+
+      {editingPick && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm">
+          <div className="bg-surface-900 border border-surface-700 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div className="p-4 border-b border-surface-700 bg-surface-800/50 flex justify-between items-center">
+              <div>
+                <h3 className="font-black text-lg text-surface-100 uppercase tracking-wide">Edit Draft Pick</h3>
+                <p className="text-xs text-primary-400 font-bold uppercase tracking-widest mt-0.5">
+                  Round {editingPick.round} • Pick {editingPick.pick_number}
+                </p>
+              </div>
+              <button 
+                onClick={() => { setEditingPick(null); setSearch(''); }}
+                className="w-8 h-8 flex items-center justify-center rounded-full bg-surface-800 text-surface-400 hover:text-white hover:bg-surface-700 transition-colors"
+              >
+                ✖
+              </button>
+            </div>
+            
+            <div className="p-4 border-b border-surface-700">
+              <input
+                type="text"
+                placeholder="Search golfers..."
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                className="w-full bg-surface-800 border-none rounded-xl px-4 py-3 text-surface-100 focus:ring-2 focus:ring-primary-500/50 outline-none"
+              />
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 space-y-2 no-scrollbar">
+              {savingEdit ? (
+                <div className="p-8 text-center text-primary-400 font-bold animate-pulse">
+                  Saving replacement...
+                </div>
+              ) : availableGolfers.length === 0 ? (
+                <div className="p-8 text-center text-surface-500 font-bold">
+                  Loading available golfers...
+                </div>
+              ) : (
+                availableGolfers
+                  .filter(g => g.name.toLowerCase().includes(search.toLowerCase()))
+                  .slice(0, 50)
+                  .map(g => (
+                    <button
+                      key={g.id}
+                      onClick={() => handleSaveEdit(g.id)}
+                      className="w-full flex items-center justify-between p-3 rounded-xl hover:bg-primary-500/20 border border-transparent hover:border-primary-500/30 transition-all text-left group"
+                    >
+                      <div>
+                        <div className="font-bold text-surface-100 group-hover:text-primary-400 transition-colors">{g.name}</div>
+                        <div className="text-xs text-surface-500 mt-0.5">OWGR: {g.owg_rank || 'N/A'}</div>
+                      </div>
+                      <div className="px-3 py-1 bg-surface-800 rounded font-bold text-xs text-surface-400 group-hover:bg-primary-600 group-hover:text-surface-900 transition-colors">
+                        Select
+                      </div>
+                    </button>
+                  ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

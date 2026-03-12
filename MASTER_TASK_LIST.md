@@ -153,6 +153,18 @@
 
 ---
 
+## Phase 13 — Expanded Commissioner Powers & Team Governance
+
+- [x] Un-lock League Settings page completely post-draft for commissioners (allowing post-draft edits to max_teams, roster_size, etc).
+- [x] Add Sub-Tab Navigation in League Settings: Break settings into "Core Info", "Scoring", "Draft Order", and "Teams" (to manage names and owners).
+- [ ] Team Claiming logic: When a user joins via invite code, prompt them to pick which orphaned/placeholder team they want to claim from a list.
+- [x] Orphan a Team (Remove Owner): Allow commissioners (via Teams settings tab) to detach a user from a team.
+- [x] Commissioner Roster Manipulation: Allow the commissioner to view any team's Roster tab and manipulate it as if they were the owner.
+- [x] Post-Draft Pick Editing (Optional): Allow commissioners to manually swap picks or adjust draft boards retroactively if errors occurred without resetting the whole draft.
+- [ ] Transfer Team Ownership: Allow commissioners to manually assign an "orphaned" team to a specific new user.
+
+---
+
 ## Data Files
 
 | File | Purpose | Records |

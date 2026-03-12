@@ -21,15 +21,15 @@ export default function RosterTab({ league, teams }: RosterTabProps) {
   const [saving, setSaving] = useState(false)
   const initialLoadRef = useRef(true)
 
-  // Set selected team to user's team
+  // Default selected team to user's team, but fallback to first team
   useEffect(() => {
-    const userTeam = teams.find(t => t.user_id === user?.id)
-    if (userTeam) {
-      setSelectedTeamId(userTeam.id)
-    } else {
+    if (teams.length > 0 && !selectedTeamId) {
+      const userTeam = teams.find(t => t.user_id === user?.id)
+      setSelectedTeamId(userTeam ? userTeam.id : teams[0].id)
+    } else if (teams.length === 0) {
       setLoading(false)
     }
-  }, [teams, user])
+  }, [teams, user, selectedTeamId])
 
   // Reset initialLoadRef when team or tournament changes
   useEffect(() => {
@@ -119,9 +119,12 @@ export default function RosterTab({ league, teams }: RosterTabProps) {
     return () => clearTimeout(timer)
   }, [lineup, selectedTeamId, selectedTournamentId, user?.id, teams, tournaments])
 
+  const isCommish = league.commissioner_id === user?.id
+
   const toggleStarter = (golferId: string) => {
     const team = teams.find(t => t.id === selectedTeamId)
-    if (team?.user_id !== user?.id) return // Can only edit own team
+    const isOwner = team?.user_id === user?.id
+    if (!isOwner && !isCommish) return // Can only edit own team or commish
 
     const currentStarters = lineup.filter(g => g.is_starter).length
     const isCurrentlyStarter = lineup.find(g => g.id === golferId)?.is_starter
@@ -139,7 +142,8 @@ export default function RosterTab({ league, teams }: RosterTabProps) {
   const toggleTradeBlock = async (golferId: string) => {
     if (!selectedTeamId) return
     const team = teams.find(t => t.id === selectedTeamId)
-    if (team?.user_id !== user?.id) return
+    const isOwner = team?.user_id === user?.id
+    if (!isOwner && !isCommish) return
 
     const golfer = lineup.find(g => g.id === golferId)
     if (!golfer) return
@@ -165,7 +169,7 @@ export default function RosterTab({ league, teams }: RosterTabProps) {
 
 
   const myTeam = teams.find(t => t.user_id === user?.id)
-  const isEditingOwnTeam = selectedTeamId === myTeam?.id
+  const isEditingOwnTeam = selectedTeamId === myTeam?.id || isCommish
   const selectedTournament = tournaments.find(t => t.id === selectedTournamentId)
   const isLocked = selectedTournament?.status === 'completed' || selectedTournament?.status === 'active'
 
@@ -174,8 +178,7 @@ export default function RosterTab({ league, teams }: RosterTabProps) {
 
   if (!selectedTeamId && !loading) return (
     <div className="p-12 text-center">
-      <div className="text-surface-400 mb-2">You don't have a team in this league yet.</div>
-      <div className="text-xs text-surface-600">Please join the league or contact the commissioner.</div>
+      <div className="text-surface-400 mb-2">No teams found in this league.</div>
     </div>
   )
 
@@ -186,6 +189,22 @@ export default function RosterTab({ league, teams }: RosterTabProps) {
       {/* Compact Header with Filters and Save Indicator */}
       <div className="bg-surface-900/80 border border-surface-700/50 rounded-2xl p-2 md:p-3 sticky top-0 z-20 backdrop-blur-xl shadow-2xl flex flex-col md:flex-row items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
+          {/* Team Select */}
+          <div className="bg-surface-800/50 border border-surface-700/30 rounded-xl px-3 py-1.5 flex flex-col min-w-[140px] transition-all hover:border-primary-500/30">
+            <label className="text-[9px] text-surface-500 uppercase font-black tracking-widest leading-none mb-1">Team</label>
+            <select 
+              value={selectedTeamId}
+              onChange={(e) => setSelectedTeamId(e.target.value)}
+              className="bg-transparent text-sm text-surface-100 font-bold outline-none cursor-pointer w-full"
+            >
+              {teams.map(t => (
+                <option key={t.id} value={t.id} className="bg-surface-800 text-sm">
+                  {t.team_name}
+                </option>
+              ))}
+            </select>
+          </div>
+
           {/* Tournament Select */}
           <div className="bg-surface-800/50 border border-surface-700/30 rounded-xl px-3 py-1.5 flex flex-col min-w-[140px] transition-all hover:border-primary-500/30">
             <label className="text-[9px] text-surface-500 uppercase font-black tracking-widest leading-none mb-1">Tournament</label>

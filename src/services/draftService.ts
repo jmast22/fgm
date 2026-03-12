@@ -174,6 +174,30 @@ export const draftService = {
     if (pickError) throw pickError
   },
 
+  async editDraftPick(
+    pickId: string,
+    teamId: string,
+    oldGolferId: string,
+    newGolferId: string
+  ): Promise<void> {
+    // 1. Update the draft pick
+    const { error: pickError } = await supabase
+      .from('draft_picks')
+      .update({ golfer_id: newGolferId })
+      .eq('id', pickId)
+
+    if (pickError) throw pickError
+
+    // 2. Update the team's roster to swap the generic acquired via draft golfer
+    const { error: rosterError } = await supabase
+      .from('team_rosters')
+      .update({ golfer_id: newGolferId })
+      .eq('team_id', teamId)
+      .eq('golfer_id', oldGolferId)
+
+    if (rosterError) throw rosterError
+  },
+
   async getAvailableGolfers(draftId: string) {
     // 1. Get drafted golfers
     const { data: picks } = await supabase

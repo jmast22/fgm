@@ -191,6 +191,56 @@ export const leagueService = {
     return data as Team
   },
 
+  async deleteTeam(teamId: string) {
+    const { data: team, error: fetchError } = await supabase
+      .from('teams')
+      .select('user_id, league_id')
+      .eq('id', teamId)
+      .single()
+
+    if (fetchError) throw fetchError
+
+    // 1. Delete the team (rosters, picks, etc cascade)
+    const { error: deleteError } = await supabase
+      .from('teams')
+      .delete()
+      .eq('id', teamId)
+
+    if (deleteError) throw deleteError
+
+    // 2. Remove from league_members if there was a user attached
+    if (team.user_id) {
+       await supabase.from('league_members')
+         .delete()
+         .match({ league_id: team.league_id, user_id: team.user_id })
+    }
+  },
+
+  async removeTeamOwner(teamId: string) {
+    const { data: team, error: fetchError } = await supabase
+      .from('teams')
+      .select('user_id, league_id')
+      .eq('id', teamId)
+      .single()
+
+    if (fetchError) throw fetchError
+    if (!team.user_id) return // already orphaned
+
+    // 1. Remove from league_members
+    const { error: memberError } = await supabase.from('league_members')
+      .delete()
+      .match({ league_id: team.league_id, user_id: team.user_id })
+    
+    if (memberError) throw memberError
+
+    // 2. Set user_id to null
+    const { error: teamError } = await supabase.from('teams')
+      .update({ user_id: null })
+      .eq('id', teamId)
+
+    if (teamError) throw teamError
+  },
+
   async ensurePlaceholders(leagueId: string, maxTeams: number) {
     const { data: existingTeams } = await supabase
       .from('teams')

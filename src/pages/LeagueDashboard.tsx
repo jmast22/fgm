@@ -26,7 +26,6 @@ export default function LeagueDashboard() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [startingDraft, setStartingDraft] = useState(false)
-  const [isEditingSettings, setIsEditingSettings] = useState(false)
   const [editSettings, setEditSettings] = useState({
     name: '',
     roster_size: 10,
@@ -36,6 +35,7 @@ export default function LeagueDashboard() {
   })
   const [editTeamNames, setEditTeamNames] = useState<Record<string, string>>({})
   const [editDraftOrder, setEditDraftOrder] = useState<string[]>([])
+  const [settingsTab, setSettingsTab] = useState<'core' | 'scoring' | 'draft' | 'teams'>('core')
 
 
   useEffect(() => {
@@ -67,39 +67,42 @@ export default function LeagueDashboard() {
     fetchData()
   }, [id])
 
+  const isCommish = league ? user?.id === league.commissioner_id : false
+
+  // Load draft order and settings when opening the settings tab
+  useEffect(() => {
+    if (activeTab === 'settings' && league) {
+      async function prepareSettings() {
+        try {
+          let currentTeams = teams;
+          if (isCommish && currentTeams.length < (league?.max_teams || 12)) {
+            currentTeams = await leagueService.ensurePlaceholders(league!.id, league!.max_teams || 12)
+            setTeams(currentTeams)
+          }
+
+          const names: Record<string, string> = {}
+          currentTeams.forEach(t => names[t.id] = t.team_name)
+          setEditTeamNames(names)
+          
+          const draft = await draftService.getDraftByLeague(league!.id)
+          if (draft && draft.draft_order && draft.draft_order.length > 0) {
+            const teamIds = currentTeams.map(t => t.id)
+            const filteredOrder = draft.draft_order.filter((tid: string) => teamIds.includes(tid))
+            const missingIds = teamIds.filter(tid => !filteredOrder.includes(tid))
+            setEditDraftOrder([...filteredOrder, ...missingIds])
+          } else {
+            setEditDraftOrder(currentTeams.map(t => t.id))
+          }
+        } catch (err) {
+          console.error('Failed to prepare settings', err)
+        }
+      }
+      prepareSettings()
+    }
+  }, [activeTab, league, isCommish, teams])
+
   if (loading) return <div className="text-surface-400">Loading league...</div>
   if (error || !league) return <div className="text-red-500">{error || 'League not found'}</div>
-
-  const isCommish = user?.id === league.commissioner_id
-
-  const startEditing = async () => {
-    setLoading(true)
-    try {
-      const allTeams = await leagueService.ensurePlaceholders(id!, editSettings.max_teams)
-      setTeams(allTeams)
-      
-      const names: Record<string, string> = {}
-      allTeams.forEach(t => names[t.id] = t.team_name)
-      setEditTeamNames(names)
-      
-      const draft = await draftService.getDraftByLeague(id!)
-      if (draft && draft.draft_order && draft.draft_order.length > 0) {
-        // Ensure the order only contains current team IDs
-        const teamIds = allTeams.map(t => t.id)
-        const filteredOrder = draft.draft_order.filter(tid => teamIds.includes(tid))
-        const missingIds = teamIds.filter(tid => !filteredOrder.includes(tid))
-        setEditDraftOrder([...filteredOrder, ...missingIds])
-      } else {
-        setEditDraftOrder(allTeams.map(t => t.id))
-      }
-      
-      setIsEditingSettings(true)
-    } catch (err: any) {
-      alert('Failed to prepare settings: ' + err.message)
-    } finally {
-      setLoading(false)
-    }
-  }
 
   const moveItem = (index: number, direction: 'up' | 'down') => {
     const newOrder = [...editDraftOrder]
@@ -118,9 +121,32 @@ export default function LeagueDashboard() {
       // 1. Update League Settings
       const updated = await leagueService.updateLeague(league!.id, editSettings)
       
-      // 2. Update Team Names that changed
+      // 2. Prune excess placeholders if max_teams was reduced
+      const currentTeams = await leagueService.getLeagueTeams(league!.id);
+      if (currentTeams.length > editSettings.max_teams) {
+         let toRemove = currentTeams.length - editSettings.max_teams;
+         // Find placeholders (no user_id) starting from the bottom of the draft order
+         const currentOrder = editDraftOrder.filter(tid => currentTeams.some(t => t.id === tid));
+         const placeholders = [...currentTeams]
+           .filter(t => !t.user_id)
+           .sort((a, b) => currentOrder.indexOf(b.id) - currentOrder.indexOf(a.id)); // reverse draft order
+         
+         for (const p of placeholders) {
+           if (toRemove <= 0) break;
+           await leagueService.deleteTeam(p.id);
+           toRemove--;
+         }
+      }
+
+      // 3. Update Team Names that changed
+      const [newTeamsList] = await Promise.all([
+        leagueService.getLeagueTeams(id!)
+      ]);
+      const validTeamIds = newTeamsList.map(t => t.id);
+
       const namePromises = Object.entries(editTeamNames).map(([teamId, name]) => {
-         const original = teams.find(t => t.id === teamId)
+         if (!validTeamIds.includes(teamId)) return null;
+         const original = newTeamsList.find(t => t.id === teamId)
          if (original && original.team_name !== name) {
            return leagueService.updateTeamName(teamId, name)
          }
@@ -129,10 +155,13 @@ export default function LeagueDashboard() {
       
       await Promise.all(namePromises)
 
-      // 3. Update Draft Order
-      await draftService.updateDraftOrder(league!.id, editDraftOrder)
+      // 4. Update Draft Order
+      const finalOrder = editDraftOrder.filter(tid => validTeamIds.includes(tid));
+      // if any new teams were created on a subsequent fetch, ensure they are in the order
+      const missingIds = validTeamIds.filter(tid => !finalOrder.includes(tid));
+      await draftService.updateDraftOrder(league!.id, [...finalOrder, ...missingIds])
 
-      // 4. Refresh data
+      // 5. Refresh data
       const [t, m] = await Promise.all([
         leagueService.getLeagueTeams(id!),
         leagueService.getLeagueMembers(id!)
@@ -141,9 +170,47 @@ export default function LeagueDashboard() {
       setLeague(updated)
       setTeams(t)
       setMembers(m)
-      setIsEditingSettings(false)
     } catch (err: any) {
       alert('Failed to save settings: ' + err.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleDeleteTeam = async (teamId: string) => {
+    const team = teams.find(t => t.id === teamId)
+    if (!team) return
+
+    if (team.user_id === user?.id) {
+       alert("You cannot delete the commissioner's team (your own team).")
+       return
+    }
+
+    if (!confirm(`Are you sure you want to delete ${team.team_name}? This action cannot be undone.`)) return
+
+    try {
+      setLoading(true)
+      await leagueService.deleteTeam(teamId)
+      
+      // Update max_teams locally
+      setEditSettings(prev => ({ ...prev, max_teams: Math.max(2, prev.max_teams - 1) }))
+      
+      // Filter out of draft order
+      setEditDraftOrder(prev => prev.filter(t => t !== teamId))
+      
+      // Update our lists
+      const [t, m] = await Promise.all([
+        leagueService.getLeagueTeams(league!.id),
+        leagueService.getLeagueMembers(league!.id)
+      ])
+      setTeams(t)
+      setMembers(m)
+
+      const names: Record<string, string> = {}
+      t.forEach(teamData => names[teamData.id] = editTeamNames[teamData.id] || teamData.team_name)
+      setEditTeamNames(names)
+    } catch (err: any) {
+      alert("Failed to delete team: " + err.message)
     } finally {
       setLoading(false)
     }
@@ -400,71 +467,36 @@ export default function LeagueDashboard() {
                 <h2 className="font-display font-bold text-2xl text-surface-100">League Settings</h2>
                 <p className="text-surface-400 text-sm mt-1">Manage rules, teams, and draft order.</p>
                </div>
-               {isCommish && league.draft_status === 'pending' && !isEditingSettings && (
-                 <button 
-                  onClick={startEditing} 
-                  className="bg-primary-600/10 text-primary-400 hover:bg-primary-600 hover:text-surface-900 px-6 py-2 rounded-lg font-bold transition-all border border-primary-500/20"
-                 >
-                   Edit All Settings
-                 </button>
-               )}
              </div>
 
-             {!isEditingSettings ? (
-              <div className="grid md:grid-cols-2 gap-8">
-                <div className="space-y-6">
-                  <h3 className="text-sm font-black text-surface-500 uppercase tracking-widest">Roster & Rules</h3>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="bg-surface-900/50 p-4 rounded-xl border border-surface-700/50">
-                      <div className="text-xs text-surface-500 uppercase font-bold mb-1">Max Teams</div>
-                      <div className="text-xl font-bold text-surface-100">{league.max_teams || 12}</div>
-                    </div>
-                    <div className="bg-surface-900/50 p-4 rounded-xl border border-surface-700/50">
-                      <div className="text-xs text-surface-500 uppercase font-bold mb-1">Roster Size</div>
-                      <div className="text-xl font-bold text-surface-100">{league.roster_size} <span className="text-sm font-medium text-surface-400">Golfers</span></div>
-                    </div>
-                    <div className="bg-surface-900/50 p-4 rounded-xl border border-surface-700/50">
-                      <div className="text-xs text-surface-500 uppercase font-bold mb-1">Waiver Rule</div>
-                      <div className="text-xl font-bold text-primary-400">{league.waiver_rule || 'Free Agency'}</div>
-                    </div>
-                    <div className="bg-surface-900/50 p-4 rounded-xl border border-surface-700/50 col-span-2 text-center">
-                      <div className="text-xs text-surface-500 uppercase font-bold mb-1">Weekly Starters</div>
-                      <div className="text-2xl font-black text-primary-400">{league.weekly_starters} <span className="text-sm font-medium text-surface-400">Golfers</span></div>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="space-y-4">
-                  <h3 className="text-sm font-black text-surface-500 uppercase tracking-widest">Commission Tools</h3>
-                  <div className="p-4 bg-primary-500/5 border border-primary-500/10 rounded-xl">
-                    <p className="text-sm text-surface-300 mb-2">
-                       Settings are locked once the draft begins. Make sure to finalize team names and order before starting.
-                    </p>
-                    {isCommish ? (
-                      <div className="text-xs font-bold text-primary-400 px-2 py-1 bg-primary-500/10 rounded inline-block">
-                        ✓ You are Commissioner
-                      </div>
-                    ) : (
-                      <div className="text-xs font-bold text-surface-500 px-2 py-1 bg-surface-800 rounded inline-block">
-                        ⓘ View Only
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-             ) : (
-               <div className="space-y-8 animate-fade-in">
-                 <div className="grid md:grid-cols-2 gap-8">
-                   <div className="space-y-4">
-                    <h3 className="text-sm font-black text-surface-500 uppercase tracking-widest mb-4">Core Info</h3>
-                    <div className="space-y-4">
-                      <div>
+             <div className="space-y-6 animate-fade-in">
+                 <div className="flex border-b border-surface-700/50 gap-4 overflow-x-auto no-scrollbar">
+                   {(['core', 'scoring', 'draft', 'teams'] as const).map(tab => (
+                     <button
+                       key={tab}
+                       onClick={(e) => { e.preventDefault(); setSettingsTab(tab); }}
+                       className={`pb-2 text-sm font-bold uppercase tracking-wider border-b-2 transition-colors whitespace-nowrap ${
+                         settingsTab === tab ? 'border-primary-500 text-primary-400' : 'border-transparent text-surface-500 hover:text-surface-300'
+                       }`}
+                     >
+                       {tab === 'core' ? 'Core Info' : tab === 'scoring' ? 'Scoring' : tab === 'draft' ? 'Draft Order' : 'Teams'}
+                     </button>
+                   ))}
+                 </div>
+                 
+                 <div className="min-h-[300px]">
+                   {settingsTab === 'core' && (
+                     <div className="space-y-4 max-w-xl">
+                      <h3 className="text-sm font-black text-surface-500 uppercase tracking-widest mb-4">Core Info</h3>
+                      <div className="space-y-4">
+                        <div>
                         <label className="block text-surface-400 text-xs font-bold uppercase tracking-wider mb-2">League Name</label>
                         <input 
                           type="text" 
                           value={editSettings.name}
                           onChange={e => setEditSettings({...editSettings, name: e.target.value})}
-                          className="w-full bg-surface-900 border border-surface-700 rounded-xl px-4 py-3 text-surface-100 focus:ring-2 focus:ring-primary-500/50 outline-none transition-all"
+                          disabled={!isCommish}
+                          className="w-full bg-surface-900 border border-surface-700 rounded-xl px-4 py-3 text-surface-100 focus:ring-2 focus:ring-primary-500/50 outline-none transition-all disabled:opacity-50"
                         />
                       </div>
                       <div className="grid grid-cols-3 gap-4">
@@ -474,7 +506,8 @@ export default function LeagueDashboard() {
                             type="number" 
                             value={editSettings.max_teams}
                             onChange={e => setEditSettings({...editSettings, max_teams: parseInt(e.target.value) || 12})}
-                            className="w-full bg-surface-900 border border-surface-700 rounded-xl px-4 py-3 text-surface-100"
+                            disabled={!isCommish}
+                            className="w-full bg-surface-900 border border-surface-700 rounded-xl px-4 py-3 text-surface-100 disabled:opacity-50"
                           />
                         </div>
                         <div>
@@ -483,7 +516,8 @@ export default function LeagueDashboard() {
                             type="number" 
                             value={editSettings.roster_size}
                             onChange={e => setEditSettings({...editSettings, roster_size: parseInt(e.target.value) || 10})}
-                            className="w-full bg-surface-900 border border-surface-700 rounded-xl px-4 py-3 text-surface-100"
+                            disabled={!isCommish}
+                            className="w-full bg-surface-900 border border-surface-700 rounded-xl px-4 py-3 text-surface-100 disabled:opacity-50"
                           />
                         </div>
                         <div>
@@ -492,7 +526,8 @@ export default function LeagueDashboard() {
                             type="number" 
                             value={editSettings.weekly_starters}
                             onChange={e => setEditSettings({...editSettings, weekly_starters: parseInt(e.target.value) || 6})}
-                            className="w-full bg-surface-900 border border-surface-700 rounded-xl px-4 py-3 text-surface-100"
+                            disabled={!isCommish}
+                            className="w-full bg-surface-900 border border-surface-700 rounded-xl px-4 py-3 text-surface-100 disabled:opacity-50"
                           />
                         </div>
                       </div>
@@ -501,24 +536,78 @@ export default function LeagueDashboard() {
                         <select 
                           value={editSettings.waiver_rule}
                           onChange={e => setEditSettings({...editSettings, waiver_rule: e.target.value})}
-                          className="w-full bg-surface-900 border border-surface-700 rounded-xl px-4 py-3 text-surface-100 focus:ring-2 focus:ring-primary-500/50 outline-none transition-all"
+                          disabled={!isCommish}
+                          className="w-full bg-surface-900 border border-surface-700 rounded-xl px-4 py-3 text-surface-100 focus:ring-2 focus:ring-primary-500/50 outline-none transition-all disabled:opacity-50"
                         >
                           <option value="Free Agency">Free Agency (Immediate)</option>
                           <option value="Weekly Waivers">Weekly Waivers</option>
                           <option value="Waiver Wire">Waiver Wire (Rolling)</option>
                         </select>
                       </div>
+                     </div>
                     </div>
-                   </div>
+                   )}
 
-                   <div className="space-y-4">
-                    <h3 className="text-sm font-black text-surface-500 uppercase tracking-widest mb-4">Draft Order & Team Names</h3>
-                    <div className="space-y-2 max-h-[400px] overflow-y-auto pr-2 no-scrollbar">
-                       {editDraftOrder.map((teamId, index) => {
-                         const team = teams.find(t => t.id === teamId)
-                         if (!team) return null
-                         return (
-                           <div key={teamId} className="flex items-center gap-3 p-3 bg-surface-900/50 border border-surface-700/50 rounded-xl group transition-all hover:border-primary-500/30">
+                   {settingsTab === 'scoring' && (
+                     <div className="p-8 text-center bg-surface-900/50 rounded-xl border border-surface-700/50">
+                       <h3 className="text-lg font-bold text-surface-100 mb-2">Scoring Settings</h3>
+                       <p className="text-surface-400">Scoring configuration will be implemented in a future phase.</p>
+                     </div>
+                   )}
+
+                   {settingsTab === 'draft' && (
+                    <div className="space-y-4 max-w-xl">
+                      <h3 className="text-sm font-black text-surface-500 uppercase tracking-widest mb-4">Draft Order</h3>
+                      <div className="space-y-2 max-h-[400px] overflow-y-auto pr-2 no-scrollbar">
+                         {editDraftOrder.map((teamId, index) => {
+                           const team = teams.find(t => t.id === teamId)
+                           if (!team) return null
+                           return (
+                             <div key={`draft-${teamId}`} className="flex items-center gap-3 p-3 bg-surface-900/50 border border-surface-700/50 rounded-xl group transition-all hover:border-primary-500/30">
+                                <div className="w-8 h-8 rounded-lg bg-surface-800 border border-surface-700 flex items-center justify-center text-xs font-black text-surface-500 group-hover:text-primary-400 transition-colors">
+                                  {index + 1}
+                                </div>
+                                <div className="flex-1">
+                                  <div className={`text-sm font-bold ${team.user_id ? 'text-surface-100' : 'text-surface-400 italic'}`}>
+                                    {editTeamNames[teamId] || team.team_name}
+                                  </div>
+                                </div>
+                                {isCommish && (
+                                  <div className="flex items-center gap-2">
+                                    <div className="flex flex-col gap-1">
+                                      <button 
+                                        onClick={() => moveItem(index, 'up')}
+                                        disabled={index === 0}
+                                        className="w-8 h-6 bg-surface-800 rounded border border-surface-700 flex items-center justify-center text-xs hover:text-primary-400 disabled:opacity-20"
+                                      >
+                                        ▲
+                                      </button>
+                                      <button 
+                                        onClick={() => moveItem(index, 'down')}
+                                        disabled={index === editDraftOrder.length - 1}
+                                        className="w-8 h-6 bg-surface-800 rounded border border-surface-700 flex items-center justify-center text-xs hover:text-primary-400 disabled:opacity-20"
+                                      >
+                                        ▼
+                                      </button>
+                                    </div>
+                                  </div>
+                                )}
+                             </div>
+                           )
+                         })}
+                      </div>
+                    </div>
+                   )}
+
+                   {settingsTab === 'teams' && (
+                    <div className="space-y-4 max-w-xl">
+                      <h3 className="text-sm font-black text-surface-500 uppercase tracking-widest mb-4">Teams & Owners</h3>
+                      <div className="space-y-2 max-h-[400px] overflow-y-auto pr-2 no-scrollbar">
+                         {editDraftOrder.map((teamId, index) => {
+                           const team = teams.find(t => t.id === teamId)
+                           if (!team) return null
+                           return (
+                             <div key={`team-${teamId}`} className="flex items-center gap-3 p-3 bg-surface-900/50 border border-surface-700/50 rounded-xl group transition-all hover:border-primary-500/30">
                               <div className="w-8 h-8 rounded-lg bg-surface-800 border border-surface-700 flex items-center justify-center text-xs font-black text-surface-500 group-hover:text-primary-400 transition-colors">
                                 {index + 1}
                               </div>
@@ -527,52 +616,61 @@ export default function LeagueDashboard() {
                                   type="text" 
                                   value={editTeamNames[teamId] || ''}
                                   onChange={e => setEditTeamNames({...editTeamNames, [teamId]: e.target.value})}
-                                  placeholder="Enter Team Name..."
-                                  className="w-full bg-transparent border-none p-0 text-sm font-bold text-surface-100 placeholder:text-surface-700 focus:ring-0"
+                                  disabled={!isCommish}
+                                  placeholder={isCommish ? "Enter Team Name..." : "Team Name"}
+                                  className="w-full bg-transparent border-none p-0 text-sm font-bold text-surface-100 placeholder:text-surface-700 focus:ring-0 disabled:opacity-75 disabled:cursor-default"
                                 />
-                                <div className="text-[10px] text-surface-500 uppercase font-bold tracking-tighter">
-                                   {team.user_id ? '✓ Real Member' : '⚡ Auto-Placeholder'}
+                                <div className="text-[10px] flex items-center gap-2 mt-1">
+                                   <span className={`uppercase font-bold tracking-tighter ${team.user_id ? 'text-green-500' : 'text-orange-500'}`}>
+                                     {team.user_id ? '✓ Real Member' : '⚡ Orphan/Placeholder'}
+                                   </span>
+                                   {isCommish && team.user_id && team.user_id !== user?.id && (
+                                     <button
+                                       onClick={async (e) => {
+                                         e.preventDefault();
+                                         if (confirm(`Remove the owner from this team? It will become an orphaned team.`)) {
+                                           await leagueService.removeTeamOwner(teamId);
+                                           // Refresh local teams
+                                           setTeams(teams.map(t => t.id === teamId ? {...t, user_id: ''} : t));
+                                         }
+                                       }}
+                                       className="text-[9px] uppercase tracking-widest bg-orange-500/10 text-orange-500 px-1.5 py-0.5 rounded hover:bg-orange-500 hover:text-white transition-colors"
+                                     >
+                                       Remove Owner
+                                     </button>
+                                   )}
                                 </div>
                               </div>
-                              <div className="flex flex-col gap-1">
-                                <button 
-                                  onClick={() => moveItem(index, 'up')}
-                                  disabled={index === 0}
-                                  className="w-8 h-6 bg-surface-800 rounded border border-surface-700 flex items-center justify-center text-xs hover:text-primary-400 disabled:opacity-20"
-                                >
-                                  ▲
-                                </button>
-                                <button 
-                                  onClick={() => moveItem(index, 'down')}
-                                  disabled={index === editDraftOrder.length - 1}
-                                  className="w-8 h-6 bg-surface-800 rounded border border-surface-700 flex items-center justify-center text-xs hover:text-primary-400 disabled:opacity-20"
-                                >
-                                  ▼
-                                </button>
-                              </div>
+                              {isCommish && (
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    onClick={(e) => { e.preventDefault(); handleDeleteTeam(teamId); }}
+                                    className="w-10 h-10 bg-red-500/10 rounded border border-red-500/20 flex items-center justify-center text-sm text-red-500 hover:bg-red-500 hover:text-white transition-colors"
+                                    title="Delete Team"
+                                  >
+                                    ✖
+                                  </button>
+                                </div>
+                              )}
                            </div>
                          )
                        })}
+                      </div>
                     </div>
-                   </div>
+                   )}
                  </div>
 
-                 <div className="flex gap-4 pt-8 border-t border-surface-700/50">
-                   <button 
-                    onClick={handleSaveSettings} 
-                    className="flex-1 bg-primary-600 hover:bg-primary-500 text-surface-900 font-black py-4 rounded-xl transition-all shadow-glow/20 uppercase tracking-wider"
-                   >
-                     🚀 Save All Changes
-                   </button>
-                   <button 
-                    onClick={() => setIsEditingSettings(false)} 
-                    className="flex-1 bg-surface-700 hover:bg-surface-600 text-surface-100 font-bold py-4 rounded-xl transition-all shadow-lg uppercase tracking-wider"
-                   >
-                     Cancel
-                   </button>
-                 </div>
+                 {isCommish && (
+                   <div className="flex gap-4 pt-8 border-t border-surface-700/50">
+                     <button 
+                      onClick={handleSaveSettings} 
+                      className="flex-1 bg-primary-600 hover:bg-primary-500 text-surface-900 font-black py-4 rounded-xl transition-all shadow-glow/20 uppercase tracking-wider"
+                     >
+                       🚀 Save All Changes
+                     </button>
+                   </div>
+                 )}
                </div>
-             )}
           </div>
         )}
       </div>
