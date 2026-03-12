@@ -10,6 +10,8 @@ export interface League {
   season_year: number
   draft_status: 'pending' | 'active' | 'completed'
   invite_code: string
+  waiver_rule: string
+  trade_deadline?: string
   created_at?: string
   updated_at?: string
 }
@@ -175,5 +177,147 @@ export const leagueService = {
 
     if (error) throw error
     return data as League
+  },
+
+  async updateTeamName(teamId: string, teamName: string) {
+    const { data, error } = await supabase
+      .from('teams')
+      .update({ team_name: teamName })
+      .eq('id', teamId)
+      .select()
+      .single()
+
+    if (error) throw error
+    return data as Team
+  },
+
+  async ensurePlaceholders(leagueId: string, maxTeams: number) {
+    const { data: existingTeams } = await supabase
+      .from('teams')
+      .select('id, team_name, user_id')
+      .eq('league_id', leagueId)
+    
+    const count = existingTeams?.length || 0
+    const needed = maxTeams - count
+    
+    if (needed > 0) {
+      const placeholders = []
+      for (let i = 0; i < needed; i++) {
+        placeholders.push({
+          league_id: leagueId,
+          team_name: `Team ${count + i + 1}`,
+          user_id: null
+        })
+      }
+      const { data, error } = await supabase
+        .from('teams')
+        .insert(placeholders)
+        .select()
+      
+      if (error) throw error
+      return [...(existingTeams || []), ...(data || [])] as Team[]
+    }
+    return (existingTeams || []) as Team[]
+  },
+  async getLeagueActivity(leagueId: string) {
+    const { data: teams } = await supabase
+      .from('teams')
+      .select('id, team_name')
+      .eq('league_id', leagueId)
+    
+    if (!teams) return []
+    const teamIds = teams.map(t => t.id)
+
+    // 1. Get recent roster additions
+    const { data: pickups } = await supabase
+      .from('team_rosters')
+      .select(`
+        team_id,
+        acquired_via,
+        created_at,
+        golfer:golfers (name)
+      `)
+      .in('team_id', teamIds)
+      .neq('acquired_via', 'draft') // Only show transactions, not initial draft
+      .order('created_at', { ascending: false })
+      .limit(20)
+
+    // 2. Get completed trades
+    const { data: trades } = await supabase
+      .from('trades')
+      .select(`
+        id,
+        offering_team:teams!offering_team_id(team_name),
+        receiving_team:teams!receiving_team_id(team_name),
+        offered_golfers,
+        requested_golfers,
+        updated_at,
+        created_at,
+        status
+      `)
+      .eq('league_id', leagueId)
+      .eq('status', 'completed')
+      .order('updated_at', { ascending: false })
+      .limit(10)
+
+    // 3. Get trade block additions (using team_rosters)
+    const { data: block } = await supabase
+      .from('team_rosters')
+      .select(`
+        team_id,
+        golfer_id,
+        is_on_trade_block,
+        golfer:golfers (name)
+      `)
+      .in('team_id', teamIds)
+      .eq('is_on_trade_block', true)
+      .limit(10)
+
+    // Combine and resolve names...
+    const allGolferIds = new Set<string>()
+    trades?.forEach(t => {
+      t.offered_golfers.forEach((id: string) => allGolferIds.add(id))
+      t.requested_golfers.forEach((id: string) => allGolferIds.add(id))
+    })
+
+    let golferNames: Record<string, string> = {}
+    if (allGolferIds.size > 0) {
+      const { data: golfers } = await supabase
+        .from('golfers')
+        .select('id, name')
+        .in('id', Array.from(allGolferIds))
+      
+      golfers?.forEach(g => golferNames[g.id] = g.name)
+    }
+
+    // Combine and format
+    const activity = [
+      ...(pickups || []).map(p => ({
+        id: `pickup-${p.team_id}-${p.created_at}`,
+        type: 'pickup' as const,
+        team_name: teams.find(t => t.id === p.team_id)?.team_name,
+        golfer_name: (p.golfer as any)?.name,
+        method: p.acquired_via,
+        date: p.created_at
+      })),
+      ...(trades || []).map(t => ({
+        id: `trade-${t.id}`,
+        type: 'trade' as const,
+        offering_team: (t.offering_team as any)?.team_name,
+        receiving_team: (t.receiving_team as any)?.team_name,
+        offered: t.offered_golfers.map((id: string) => golferNames[id] || 'Unknown'),
+        requested: t.requested_golfers.map((id: string) => golferNames[id] || 'Unknown'),
+        date: t.updated_at || t.created_at
+      })),
+      ...(block || []).map(b => ({
+        id: `block-${b.team_id}-${b.golfer_id}`,
+        type: 'block' as const,
+        team_name: teams.find(t => t.id === b.team_id)?.team_name,
+        golfer_name: (b.golfer as any)?.name,
+        date: new Date().toISOString() // No specialized timestamp yet
+      }))
+    ]
+
+    return activity.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
   }
 }

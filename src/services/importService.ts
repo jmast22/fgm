@@ -22,6 +22,13 @@ export interface CSVFieldGolfer {
   "OWGR": string | number;
 }
 
+const normalizeName = (name: string) => {
+  return name
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^\x00-\x7F]/g, ""); // Catch any remaining non-ASCII
+};
+
 export const importGolfers = async (csvData: string) => {
   const parsedData = parseCSVString<CSVGolfer>(csvData);
   
@@ -46,17 +53,25 @@ export const importGolfers = async (csvData: string) => {
       continue; // Skip alias on failure
     }
 
-    // 2. Insert canonical alias
+    // 2. Insert aliases
     if (golferData) {
-      const { error: aliasError } = await supabase
-        .from('golfer_aliases')
-        .insert({
-          golfer_id: golferData.id,
-          alias_name: row.Name
-        });
-        
-      if (aliasError) {
-        console.error('Error inserting alias for:', row.Name, aliasError);
+      const aliases = [row.Name];
+      const normalized = normalizeName(row.Name);
+      if (normalized !== row.Name) {
+        aliases.push(normalized);
+      }
+
+      for (const aliasName of aliases) {
+        const { error: aliasError } = await supabase
+          .from('golfer_aliases')
+          .insert({
+            golfer_id: golferData.id,
+            alias_name: aliasName
+          });
+          
+        if (aliasError && aliasError.code !== '23505') {
+          console.error('Error inserting alias for:', aliasName, aliasError);
+        }
       }
     }
   }
@@ -99,17 +114,32 @@ export const importTournamentField = async (tournamentId: string, csvData: strin
     if (!row.Name) continue;
 
     // 1. Find golfer by alias or exact name
-    const { data: aliasData, error: findError } = await supabase
+    let { data: aliasData, error: findError } = await supabase
       .from('golfer_aliases')
       .select('golfer_id')
       .ilike('alias_name', row.Name)
       .limit(1)
       .single();
 
+    // If not found, try normalized name
+    if (!aliasData || findError) {
+      const normalized = normalizeName(row.Name);
+      if (normalized !== row.Name) {
+        const { data: normAlias } = await supabase
+          .from('golfer_aliases')
+          .select('golfer_id')
+          .ilike('alias_name', normalized)
+          .limit(1)
+          .single();
+        
+        aliasData = normAlias;
+      }
+    }
+
     let golferId = aliasData?.golfer_id;
 
-    if (!golferId || findError) {
-      // Fallback: search main table just in case missing alias
+    if (!golferId) {
+      // Fallback: search main table
       const { data: golferData } = await supabase
         .from('golfers')
         .select('id')
@@ -118,6 +148,18 @@ export const importTournamentField = async (tournamentId: string, csvData: strin
         .single();
         
       golferId = golferData?.id;
+
+      // Final fallback: search main table with normalized name
+      if (!golferId) {
+        const normalized = normalizeName(row.Name);
+        const { data: normGolfer } = await supabase
+          .from('golfers')
+          .select('id')
+          .ilike('name', normalized)
+          .limit(1)
+          .single();
+        golferId = normGolfer?.id;
+      }
     }
 
     if (!golferId) {
@@ -142,7 +184,12 @@ export const importTournamentField = async (tournamentId: string, csvData: strin
       });
 
     if (insertError) {
-      console.error('Error inserting field golfer:', row.Name, insertError);
+      // If already in field, just count as success (or ignore)
+      if (insertError.code === '23505') {
+        successCount++;
+      } else {
+        console.error('Error inserting field golfer:', row.Name, insertError);
+      }
     } else {
         successCount++;
     }

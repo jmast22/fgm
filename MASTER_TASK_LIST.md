@@ -87,26 +87,39 @@
 
 ---
 
-## Phase 7 — Weekly Lineup Management
+## Phase 7 — UI & Navigation Overhaul ✅
 
-- [ ] Set Lineup page (toggle starters vs bench)
-- [ ] Lineup validation (enforce weekly starter count)
-- [ ] Lineup lock logic (lock at tournament start, prevent edits)
-- [ ] Auto-set lineup (default to previous week's starters)
-- [ ] Lineup status indicators (playing in tournament field vs not entered)
-
----
-
-## Phase 8 — Trades & Waivers
-
-- [ ] Trade proposal system (propose, accept/reject)
-- [ ] Trade review period (commissioner approval or league vote)
-- [ ] Waiver wire (drop/add golfers mid-season)
-- [ ] Trade history log
+- [x] Refactor `AppLayout` to remove global navigation from header (minimal header)
+- [x] Hide/Remove Admin button from main navigation
+- [x] Add "Back to Dashboard" button on all league-specific pages
+- [x] Implement nested navigation on League Page (Roster, League, Draft, Settings, Schedule)
+- [x] Style league navigation as a premium internal tab system
+- [x] Transition `LeagueDashboard` to a component-based layout for tabs
 
 ---
 
-## Phase 9 — Scraper & Live Stats
+## Phase 8 — Weekly Lineup Management
+
+- [x] Set Lineup page (toggle starters vs bench)
+- [x] Lineup validation (enforce weekly starter count)
+- [x] Lineup lock logic (lock at tournament start, prevent edits)
+- [x] Auto-set lineup (default to previous week's starters)
+- [x] Lineup status indicators (playing in tournament field vs not entered)
+
+---
+
+## Phase 9 — Trades & Waivers ✅
+- [x] Add `trades` table and `waiver_rule` to `leagues`
+- [x] "Golfers" tab (undrafted players list with stats)
+- [x] "Trades" tab (Trade Block, Active Offers, History)
+- [x] Implement trade proposal logic (Propose Trade modal)
+- [x] Implement trade acceptance/rejection execution
+- [x] Implement golfer add/drop logic (Waivers)
+- [x] Trade history log details
+
+---
+
+## Phase 10 — Scraper & Live Stats
 
 - [ ] Research PGATour.com leaderboard data format
 - [ ] Build scraper worker (`scrapeRoundStats.ts`)
@@ -117,7 +130,7 @@
 
 ---
 
-## Phase 10 — Fantasy Scoring & Leaderboard
+## Phase 11 — Fantasy Scoring & Leaderboard
 
 - [ ] Scoring service: Birdie = +3, Eagle = +8, Stroke under par = +1
 - [ ] Tournament Leaderboard page (teams ranked by points, golfer breakdown)
@@ -128,7 +141,7 @@
 
 ---
 
-## Phase 11 — Dashboard & Polish
+## Phase 12 — Polish & Optimization
 
 - [ ] Main Dashboard (active leagues, upcoming tournaments, team summary)
 - [ ] Tournament page (details, field with rankings, leaderboard, golfer stats)

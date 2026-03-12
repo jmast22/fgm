@@ -8,18 +8,23 @@ DECLARE
     v_roster_size INT;
 BEGIN
     -- Get league details for the draft to calculate boundaries
-    SELECT l.roster_size, (SELECT COUNT(*) FROM public.teams WHERE league_id = l.id)
+    SELECT l.roster_size, COALESCE((SELECT COUNT(*) FROM public.teams WHERE league_id = l.id), 0)
     INTO v_roster_size, v_total_teams
     FROM public.drafts d
     JOIN public.leagues l ON d.league_id = l.id
     WHERE d.id = NEW.draft_id;
+
+    -- Default to 1 if not found to avoid division by zero
+    IF v_total_teams = 0 THEN
+        v_total_teams := 1;
+    END IF;
 
     -- Calculate next pick and round
     v_new_pick := NEW.pick_number + 1;
     v_new_round := NEW.round;
     
     -- If we completed a round
-    IF NEW.pick_number % v_total_teams = 0 THEN
+    IF v_total_teams > 0 AND NEW.pick_number % v_total_teams = 0 THEN
         v_new_round := NEW.round + 1;
     END IF;
 

@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase'
 export interface Draft {
   id: string
   league_id: string
-  status: 'pending' | 'in_progress' | 'completed' | 'paused'
+  status: 'pending' | 'active' | 'completed' | 'paused'
   current_round: number
   current_pick: number
   draft_order: string[] // Array of team_ids
@@ -32,61 +32,118 @@ export interface DraftTeam {
 export const draftService = {
   // Start the draft for a league
   async startDraft(leagueId: string): Promise<string> {
-    // 1. Get all teams in the league
+    // 1. Get league settings
+    const { data: league, error: leagueError } = await supabase
+      .from('leagues')
+      .select('max_teams')
+      .eq('id', leagueId)
+      .single()
+
+    if (leagueError) throw leagueError
+
+    // 2. Ensure all placeholder teams exist in DB
     const { data: teams, error: teamsError } = await supabase
       .from('teams')
       .select('id')
       .eq('league_id', leagueId)
 
     if (teamsError) throw teamsError
-    if (!teams || teams.length === 0) throw new Error('No teams in league to draft')
+    
+    let finalTeamIds = teams.map(t => t.id)
+    if (finalTeamIds.length < league.max_teams) {
+       // We need to create placeholders if they weren't created yet
+       const needed = league.max_teams - finalTeamIds.length
+       const placeholders = []
+       for (let i = 0; i < needed; i++) {
+         placeholders.push({
+           league_id: leagueId,
+           team_name: `Team ${finalTeamIds.length + i + 1}`,
+           user_id: null
+         })
+       }
+       const { data: created, error: createError } = await supabase
+         .from('teams')
+         .insert(placeholders)
+         .select('id')
+       
+       if (createError) throw createError
+       finalTeamIds = [...finalTeamIds, ...(created?.map(c => c.id) || [])]
+    }
 
-    // 2. randomize draft order
-    const teamIds = teams.map(t => t.id)
-    const shuffledIds = [...teamIds].sort(() => Math.random() - 0.5)
-
-    // 3. Create draft record
-    const { data: draft, error: draftError } = await supabase
+    // 3. Check for existing draft
+    const { data: existingDraft } = await supabase
       .from('drafts')
-      .insert({
-        league_id: leagueId,
-        status: 'in_progress',
-        current_round: 1,
-        current_pick: 1,
-        draft_order: shuffledIds,
-      })
-      .select('id')
-      .single()
+      .select('*')
+      .eq('league_id', leagueId)
+      .maybeSingle()
 
-    if (draftError) throw draftError
+    if (existingDraft) {
+      // If we have an existing draft, use its order if ready, otherwise shuffle
+      const order = (existingDraft.draft_order && existingDraft.draft_order.length === league.max_teams)
+        ? existingDraft.draft_order
+        : [...finalTeamIds].sort(() => Math.random() - 0.5)
 
-    // 4. Update league status
-    const { error: leagueError } = await supabase
-      .from('leagues')
-      .update({ draft_status: 'active' })
-      .eq('id', leagueId)
+      const { data: draft, error: updateError } = await supabase
+        .from('drafts')
+        .update({
+          status: 'active',
+          draft_order: order,
+          current_round: 1,
+          current_pick: 1
+        })
+        .eq('id', existingDraft.id)
+        .select('id')
+        .single()
 
-    if (leagueError) throw leagueError
+      if (updateError) throw updateError
 
-    return draft.id
+      // 4. Update league status
+      await supabase.from('leagues').update({ draft_status: 'active' }).eq('id', leagueId)
+      
+      return draft.id
+    } else {
+      // Create new draft
+      const shuffledIds = [...finalTeamIds].sort(() => Math.random() - 0.5)
+
+      const { data: draft, error: draftError } = await supabase
+        .from('drafts')
+        .insert({
+          league_id: leagueId,
+          status: 'active',
+          current_round: 1,
+          current_pick: 1,
+          draft_order: shuffledIds,
+        })
+        .select('id')
+        .single()
+
+      if (draftError) throw draftError
+
+      // 4. Update league status
+      await supabase.from('leagues').update({ draft_status: 'active' }).eq('id', leagueId)
+
+      return draft.id
+    }
   },
 
-  async getActiveDraft(leagueId: string): Promise<Draft | null> {
+  async getDraftByLeague(leagueId: string): Promise<Draft | null> {
     const { data, error } = await supabase
       .from('drafts')
       .select('*')
       .eq('league_id', leagueId)
-      .not('status', 'eq', 'completed')
       .maybeSingle()
 
     if (error) throw error
     return data
   },
 
-  async getDraftPicks(draftId: string): Promise<DraftPick[]> {
+  async getDraftPicks(draftId: string): Promise<any[]> {
     const { data, error } = await supabase
       .from('draft_picks')
-      .select('*')
+      .select(`
+        *,
+        golfer:golfers(name)
+      `)
       .eq('draft_id', draftId)
       .order('pick_number', { ascending: true })
 
@@ -118,35 +175,176 @@ export const draftService = {
   },
 
   async getAvailableGolfers(draftId: string) {
-    // Gets all golfers not yet picked in this draft
-    // Using a simpler approach: get all golfers + rankings, and filter out picked ones
-    
-    // First get drafted
-    const { data: picks, error: picksError } = await supabase
+    // 1. Get drafted golfers
+    const { data: picks } = await supabase
       .from('draft_picks')
       .select('golfer_id')
       .eq('draft_id', draftId)
-      
-    if (picksError) throw picksError
+    
     const pickedIds = picks?.map(p => p.golfer_id) || []
 
-    // Then get all golfers
+    // 2. Find the most recent tournament that has a field defined
+    const { data: latestTourney } = await supabase
+      .from('tournament_golfers')
+      .select('tournament_id, tournaments!inner(start_date)')
+      .order('tournaments(start_date)', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    const tournamentId = latestTourney?.tournament_id
+
+    // 3. Fetch golfers in the field for this tournament, excluding picked ones
     let query = supabase
-      .from('golfers')
-      .select('*')
-      
+      .from('tournament_golfers')
+      .select(`
+        owg_rank,
+        golfer:golfers!inner(*)
+      `)
+      .eq('tournament_id', tournamentId)
+      .order('owg_rank', { ascending: true })
+
     if (pickedIds.length > 0) {
-      // Normally we'd use .not('id', 'in', pickedIds) but if it's too long it might fail
-      // Since it's <200 max, .not in is fine.
-      query = query.not('id', 'in', `(${pickedIds.join(',')})`)
+      query = query.not('golfer_id', 'in', `(${pickedIds.join(',')})`)
     }
 
-    const { data: available, error } = await query
+    const { data: field, error } = await query
     if (error) throw error
 
-    // Fetch some basic ranking data if possible. The `tournament_golfers` table has rankings for specific tournaments.
-    // For general availibility, we might just sort by name or some arbitrary ranking.
-    // For now just sort by name.
-    return available?.sort((a, b) => a.name.localeCompare(b.name)) || []
+    // 4. Transform and return
+    return field?.map(f => ({
+      ...(f.golfer as any),
+      owg_rank: f.owg_rank
+    })) || []
+  },
+
+  async resetDraft(leagueId: string): Promise<void> {
+    // 1. Get the draft ID
+    const { data: draft } = await supabase
+      .from('drafts')
+      .select('id')
+      .eq('league_id', leagueId)
+      .maybeSingle()
+
+    if (!draft) return
+
+    // 2. Delete all picks (this will trigger removal from rosters if you have such triggers, but for reliability we should check)
+    await supabase.from('draft_picks').delete().eq('draft_id', draft.id)
+    
+    // Clean up rosters too for this league
+    const { data: teams } = await supabase.from('teams').select('id').eq('league_id', leagueId)
+    if (teams && teams.length > 0) {
+      await supabase.from('team_rosters').delete().in('team_id', teams.map(t => t.id))
+    }
+
+    // 3. Delete placeholder teams (teams with no user_id)
+    await supabase.from('teams').delete().eq('league_id', leagueId).is('user_id', null)
+
+    // 4. Delete the draft record
+    await supabase.from('drafts').delete().eq('id', draft.id)
+
+    // 5. Reset league status
+    await supabase.from('leagues').update({ draft_status: 'pending' }).eq('id', leagueId)
+  },
+
+  async pauseDraft(draftId: string): Promise<void> {
+    const { error } = await supabase
+      .from('drafts')
+      .update({ status: 'paused' })
+      .eq('id', draftId)
+    if (error) throw error
+  },
+
+  async resumeDraft(draftId: string): Promise<void> {
+    const { error } = await supabase
+      .from('drafts')
+      .update({ status: 'active' })
+      .eq('id', draftId)
+    if (error) throw error
+  },
+
+  async undoLastPick(draftId: string): Promise<void> {
+    // 1. Get the latest pick
+    const { data: latestPick, error: fetchError } = await supabase
+      .from('draft_picks')
+      .select('*')
+      .eq('draft_id', draftId)
+      .order('pick_number', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    if (fetchError) throw fetchError
+    if (!latestPick) return
+
+    // 2. Delete the pick. The trigger (if any) might not handle UNDO. 
+    // We need to manually revert draft state too.
+    const { error: deleteError } = await supabase
+      .from('draft_picks')
+      .delete()
+      .eq('id', latestPick.id)
+
+    if (deleteError) throw deleteError
+
+    // 3. Revert draft round/pick
+    const { data: draft } = await supabase.from('drafts').select('*').eq('id', draftId).single()
+    if (draft) {
+      // Logic to decrement pick number
+      let prevPick = draft.current_pick - 1
+      let prevRound = draft.current_round
+      
+      if (prevPick < 1) {
+        prevPick = 1
+      }
+      // Need to handle round decrement if pick was 1... but advance_draft_pick_fn handles ADVANCE.
+      // For UNDO to be reliable, we'd need a robust backend function.
+      // For now, we'll try to just update the draft table.
+      
+      const { data: allTeams } = await supabase.from('teams').select('id').eq('league_id', draft.league_id)
+      const numTeams = allTeams?.length || 1
+      
+      prevRound = Math.ceil(prevPick / numTeams)
+      if (prevPick === 0) {
+          prevPick = 1
+          prevRound = 1
+      }
+
+      await supabase.from('drafts').update({
+        current_pick: prevPick,
+        current_round: prevRound,
+        status: 'active' // Ensure it's not 'completed' anymore
+      }).eq('id', draftId)
+      
+      // Also remove from roster
+      await supabase.from('team_rosters')
+        .delete()
+        .eq('team_id', latestPick.team_id)
+        .eq('golfer_id', latestPick.golfer_id)
+    }
+  },
+
+  async updateDraftOrder(leagueId: string, teamIds: string[]): Promise<void> {
+    const { data: existingDraft } = await supabase
+      .from('drafts')
+      .select('id')
+      .eq('league_id', leagueId)
+      .maybeSingle()
+
+    if (existingDraft) {
+      const { error } = await supabase
+        .from('drafts')
+        .update({ draft_order: teamIds })
+        .eq('id', existingDraft.id)
+      if (error) throw error
+    } else {
+      const { error } = await supabase
+        .from('drafts')
+        .insert({
+          league_id: leagueId,
+          draft_order: teamIds,
+          status: 'pending',
+          current_round: 1,
+          current_pick: 1
+        })
+      if (error) throw error
+    }
   }
 }
