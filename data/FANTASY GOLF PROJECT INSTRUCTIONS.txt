@@ -1,0 +1,462 @@
+FANTASY GOLF PROJECT INSTRUCTIONS
+
+Below is a **clean, simplified instruction set** you can paste directly into **Google Antigravity** so the AI IDE understands the project and builds the structure correctly.
+The goal is **minimal complexity** while still building a solid foundation you can expand later. Think of it as building the clubhouse before installing the giant leaderboard screen. ⛳🧱
+
+---
+
+# Antigravity Project Instructions
+
+## Project Name
+
+**Fantasy Golf League**
+
+---
+
+# 1. Overview
+
+Build a **Progressive Web App (PWA)** that allows users to run **season-long fantasy golf leagues** similar to fantasy football.
+
+Users will:
+
+* Create or join leagues
+* Draft PGA golfers before the season
+* Set weekly lineups for tournaments
+* Earn fantasy points based on golfer performance
+
+Each tournament acts as a **weekly matchup** where teams accumulate points.
+
+The system will use **CSV files for golfer lists** and a **simple scraper to update round stats**.
+
+---
+
+# 2. Tech Stack
+
+Frontend
+
+* React
+* TailwindCSS
+* Mobile-first design
+* Progressive Web App
+
+Backend
+
+* Supabase database
+* Supabase authentication
+
+Infrastructure
+
+* GitHub repository
+* Vercel hosting
+
+---
+
+# 3. Core App Features
+
+### User Accounts
+
+Users can:
+
+* Create account
+* Login
+* Join leagues
+* Create leagues
+
+Use **Supabase Auth**.
+
+---
+
+### League System
+
+A commissioner can:
+
+* Create a league
+* Invite users
+* Set roster size (6–10 golfers)
+* Set weekly starters (4–6 golfers)
+
+Tables required:
+
+```
+users
+leagues
+league_members
+teams
+```
+
+---
+
+### Draft System
+
+Each league runs a **snake draft** before the season.
+
+Each user drafts **6–10 golfers**.
+
+Tables required:
+
+```
+golfers
+drafts
+draft_picks
+team_rosters
+```
+
+---
+
+### Weekly Lineups
+
+Each tournament week users choose starters.
+
+Example:
+
+```
+Team roster: 8 golfers
+Weekly starters: 5 golfers
+```
+
+Tables:
+
+```
+weekly_lineups
+lineup_golfers
+```
+
+---
+
+### Team Leaderboard
+
+For each tournament:
+
+* Calculate fantasy points
+* Rank teams
+
+Tables:
+
+```
+golfer_round_stats
+team_scores
+```
+
+Points will be calculated in the **frontend UI**, not stored in the database.
+
+---
+
+# 4. Golfer Data System
+
+Golfers will be imported from a CSV file.
+
+File name:
+
+```
+master_golfer_list.csv
+```
+
+Structure:
+
+```
+golfer_id,golfer_name
+1,Scottie Scheffler
+2,Rory McIlroy
+3,Jon Rahm
+```
+
+The app should import this CSV into the **golfers table**.
+
+Database table:
+
+```
+golfers
+id
+golfer_name
+```
+
+---
+
+# 5. Tournament Field Data
+
+Each tournament will also use a CSV file.
+
+File name example:
+
+```
+golfer_list_masters.csv
+```
+
+Structure:
+
+```
+tournament_name,golfer_id
+Masters,1
+Masters,2
+Masters,3
+```
+
+This defines **which golfers are playing in the tournament**.
+
+Database tables:
+
+```
+tournaments
+tournament_golfers
+```
+
+---
+
+# 6. Simplified Scraper
+
+The scraper only needs to collect **basic round statistics**.
+
+Stats to collect:
+
+```
+round_score
+total_birdies
+total_eagles
+```
+
+These stats will be stored in the table:
+
+```
+golfer_round_stats
+```
+
+Table structure:
+
+```
+id
+tournament_id
+golfer_id
+round
+score
+birdies
+eagles
+updated_at
+```
+
+Example row:
+
+```
+tournament_id: 2
+golfer_id: 1
+round: 1
+score: 67
+birdies: 6
+eagles: 1
+```
+
+---
+
+# 7. Scraper Worker
+
+Create a worker:
+
+```
+scrapeRoundStats.ts
+```
+
+Purpose:
+
+* Fetch leaderboard data
+* Extract stats for each golfer
+* Update the database
+
+Scraper flow:
+
+```
+fetch leaderboard
+↓
+loop through players
+↓
+extract score, birdies, eagles
+↓
+upsert golfer_round_stats
+```
+
+Pseudo-logic:
+
+```
+for each player in leaderboard:
+  save
+    tournament_id
+    golfer_id
+    round
+    score
+    birdies
+    eagles
+```
+
+---
+
+# 8. Scraper Schedule
+
+Run the scraper **once after each round**.
+
+Schedule:
+
+```
+Thursday evening
+Friday evening
+Saturday evening
+Sunday evening
+```
+
+The scraper should update the stats using **upsert operations** to prevent duplicates.
+
+---
+
+# 9. Fantasy Scoring
+
+Fantasy points will be calculated in the UI using the stored stats.
+
+Example scoring system:
+
+```
+Birdie = +3 points
+Eagle = +8 points
+Stroke under par = +1 point
+```
+
+Example:
+
+```
+Score: 67 (-5)
+Birdies: 6
+Eagles: 1
+```
+
+Points:
+
+```
+6 birdies = 18
+1 eagle = 8
+5 under = 5
+
+Total = 31 points
+```
+
+The UI should calculate team totals by summing points for **active golfers in the weekly lineup**.
+
+---
+
+# 10. Team Leaderboard Logic
+
+For each team:
+
+```
+get weekly lineup
+↓
+fetch golfer stats
+↓
+calculate points
+↓
+sum points
+↓
+rank teams
+```
+
+This leaderboard should update automatically when stats update.
+
+---
+
+# 11. Project Folder Structure
+
+Recommended structure:
+
+```
+/data
+  master_golfer_list.csv
+  golfer_list_masters.csv
+
+/workers
+  scrapeRoundStats.ts
+
+/services
+  scoringService.ts
+
+/components
+  leaderboard.tsx
+  lineup.tsx
+  draft.tsx
+```
+
+---
+
+# 12. UI Pages
+
+Create the following pages:
+
+### Dashboard
+
+Shows:
+
+```
+active leagues
+upcoming tournaments
+team summary
+```
+
+---
+
+### League Page
+
+Tabs:
+
+```
+standings
+rosters
+draft
+trades
+```
+
+---
+
+### Tournament Page
+
+Displays:
+
+```
+tournament leaderboard
+team scores
+golfer stats
+```
+
+---
+
+# 13. PWA Features
+
+The app should support:
+
+* mobile install
+* offline support
+* responsive layout
+
+---
+
+# 14. Development Priority
+
+Build features in this order:
+
+1. Authentication
+2. League creation
+3. CSV golfer import
+4. Draft system
+5. Weekly lineup selection
+6. Scraper for round stats
+7. Leaderboard scoring
+
+---
+
+# 15. Important Rules
+
+Follow these rules:
+
+* Use `golfer_id` as the primary identifier for golfers
+* Do not rely on name matching
+* Always use **upsert operations** when importing data
+* The database should store **raw stats only**
+* Fantasy scoring should happen in the frontend
+
+---
+
+✅ This setup keeps the system **simple, stable, and fast to build**.
+
