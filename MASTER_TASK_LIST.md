@@ -119,7 +119,26 @@
 
 ---
 
-## Phase 10 — Scraper & Live Stats
+## Phase 10 — Fantasy Scoring & Leaderboard
+
+- [x] Scoring service: Round Scoring engine (strokes +/- par per round)
+- [x] Missed cut penalty logic (avg of 10 worst cut-makers, min +4)
+- [x] Leaderboard tab (between Roster and Golfers) with tournament filter
+- [x] Team standings panel (R1, R2, R3, R4, Total)
+- [x] Individual golfer scores panel (round-by-round + expandable placeholder for hole-by-hole)
+- [x] Golfers tab: show all golfers with season stats, OWGR, tournaments played
+- [x] Golfers tab: "On Roster" toggle filter + sort options (OWGR, Score, Name)
+- [x] Scoring Settings sub-tab: display both scoring options (Round Scoring active, Hole Scoring coming soon)
+- [x] Add `made_cut` column to `golfer_round_stats` schema
+- [x] Seed script for The Players Championship mock data
+- [x] Admin UI seed button for The Players Championship
+- [x] Season Standings (cumulative scores, league rankings, tournaments played count)
+- [x] Live leaderboard updates (Supabase Realtime on `golfer_round_stats` with LIVE badge)
+- [x] Weekly matchup results (roto style — expandable Schedule rows with all team positions)
+
+---
+
+## Phase 11 — Scraper & Live Stats
 
 - [ ] Research PGATour.com leaderboard data format
 - [ ] Build scraper worker (`scrapeRoundStats.ts`)
@@ -127,17 +146,6 @@
 - [ ] Scheduling strategy (manual trigger after Thu/Fri/Sat/Sun rounds)
 - [ ] Error handling (logging, retry, partial failure)
 - [ ] Manual trigger UI (admin button, last run status)
-
----
-
-## Phase 11 — Fantasy Scoring & Leaderboard
-
-- [ ] Scoring service: Birdie = +3, Eagle = +8, Stroke under par = +1
-- [ ] Tournament Leaderboard page (teams ranked by points, golfer breakdown)
-- [ ] Golfer Stats view (round-by-round stats + fantasy points)
-- [ ] Season Standings (cumulative points, league rankings)
-- [ ] Live leaderboard updates (Supabase Realtime on `golfer_round_stats`)
-- [ ] Weekly matchup results
 
 ---
 
@@ -180,6 +188,18 @@
 | Golfer IDs | Auto-generated UUIDs |
 | Name matching | Canonical name + aliases table |
 | Tournament fields | `players_field_<name>.csv` with per-tournament rankings |
-| Fantasy scoring | Calculated in frontend (not stored) |
+| Fantasy scoring | Round Scoring: strokes +/- par per round (with missed cut penalty) |
 | Scraper source | PGATour.com, manual trigger after each round |
-| Scoring | Birdie +3, Eagle +8, Stroke under par +1 |
+| Scoring Option 2 | Hole Scoring: per-hole points + add-ons (Phase 14, API-based) |
+
+---
+
+## Phase 14 — Hole Scoring Engine & API Integration
+
+- [ ] Research and integrate golf scores API (hole-by-hole data)
+- [ ] Hole Scoring engine: Eagle+ +7, Birdie +3, Par +0.5, Bogey -1, Double+ -3
+- [ ] Overall Finish add-on (1st: +30, 2nd: +20, ... 41st+: 0)
+- [ ] Round Bonus add-ons (5+ birdies: +5, no bogeys: +5)
+- [ ] Commissioner toggle between Round Scoring and Hole Scoring
+- [ ] Hole-by-hole golfer detail view (expandable in Leaderboard)
+- [ ] Store hole-by-hole data in new `golfer_hole_stats` table

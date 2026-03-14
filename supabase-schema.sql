@@ -153,6 +153,7 @@ CREATE TABLE public.golfer_round_stats (
     score INT,
     birdies INT DEFAULT 0,
     eagles INT DEFAULT 0,
+    made_cut BOOLEAN DEFAULT true,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
     UNIQUE (tournament_id, golfer_id, round)
@@ -245,6 +246,14 @@ CREATE POLICY "Weekly lineups viewable by everyone" ON public.weekly_lineups FOR
 CREATE POLICY "Users can manage their lineups" ON public.weekly_lineups FOR ALL USING (
     EXISTS (SELECT 1 FROM public.teams WHERE teams.id = weekly_lineups.team_id AND teams.user_id = auth.uid())
 );
+CREATE POLICY "Commissioners can manage league lineups" ON public.weekly_lineups FOR ALL USING (
+    EXISTS (
+        SELECT 1 FROM public.teams 
+        JOIN public.leagues ON leagues.id = teams.league_id
+        WHERE teams.id = weekly_lineups.team_id 
+        AND leagues.commissioner_id = auth.uid()
+    )
+);
 
 -- Lineup Golfers: Viewable by everyone. Users manage their own.
 CREATE POLICY "Lineup golfers viewable by everyone" ON public.lineup_golfers FOR SELECT USING (true);
@@ -253,6 +262,15 @@ CREATE POLICY "Users can manage lineup golfers" ON public.lineup_golfers FOR ALL
         SELECT 1 FROM public.weekly_lineups 
         JOIN public.teams ON teams.id = weekly_lineups.team_id 
         WHERE weekly_lineups.id = lineup_golfers.lineup_id AND teams.user_id = auth.uid()
+    )
+);
+CREATE POLICY "Commissioners can manage league lineup golfers" ON public.lineup_golfers FOR ALL USING (
+    EXISTS (
+        SELECT 1 FROM public.weekly_lineups
+        JOIN public.teams ON teams.id = weekly_lineups.team_id
+        JOIN public.leagues ON leagues.id = teams.league_id
+        WHERE weekly_lineups.id = lineup_golfers.lineup_id
+        AND leagues.commissioner_id = auth.uid()
     )
 );
 

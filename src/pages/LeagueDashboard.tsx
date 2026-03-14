@@ -11,8 +11,10 @@ import ScheduleTab from '../components/league/ScheduleTab'
 import GolfersTab from '../components/league/GolfersTab'
 import TradesTab from '../components/league/TradesTab'
 import LeagueActivity from '../components/league/LeagueActivity'
+import LeaderboardTab from '../components/league/LeaderboardTab'
+import { scoringService, formatScore, scoreColor } from '../services/scoringService'
 
-type TabId = 'roster' | 'league' | 'draft' | 'settings' | 'schedule' | 'golfers' | 'trades';
+type TabId = 'roster' | 'leaderboard' | 'league' | 'draft' | 'settings' | 'schedule' | 'golfers' | 'trades';
 
 export default function LeagueDashboard() {
   const { id } = useParams<{ id: string }>()
@@ -36,6 +38,7 @@ export default function LeagueDashboard() {
   const [editTeamNames, setEditTeamNames] = useState<Record<string, string>>({})
   const [editDraftOrder, setEditDraftOrder] = useState<string[]>([])
   const [settingsTab, setSettingsTab] = useState<'core' | 'scoring' | 'draft' | 'teams'>('core')
+  const [seasonStandings, setSeasonStandings] = useState<Record<string, { total: number; tournaments_played: number }>>({})
 
 
   useEffect(() => {
@@ -58,6 +61,16 @@ export default function LeagueDashboard() {
         })
         setTeams(t)
         setMembers(m)
+
+        // Load season standings
+        try {
+          const standings = await scoringService.getSeasonStandings(l.id)
+          const standingsMap: Record<string, { total: number; tournaments_played: number }> = {}
+          standings.forEach(s => { standingsMap[s.team_id] = { total: s.total, tournaments_played: s.tournaments_played } })
+          setSeasonStandings(standingsMap)
+        } catch (e) {
+          console.error('Failed to load standings:', e)
+        }
       } catch (err: any) {
         setError(err.message || 'Failed to load league data')
       } finally {
@@ -219,6 +232,7 @@ export default function LeagueDashboard() {
   const tabs: { id: TabId; label: string; icon: string }[] = [
     { id: 'league', label: 'League', icon: '🏆' },
     { id: 'roster', label: 'Roster', icon: '👤' },
+    { id: 'leaderboard', label: 'Leaderboard', icon: '📊' },
     { id: 'golfers', label: 'Golfers', icon: '⛳' },
     { id: 'trades', label: 'Trades', icon: '↔️' },
     { id: 'draft', label: 'Draft', icon: '🎯' },
@@ -332,9 +346,18 @@ export default function LeagueDashboard() {
                       }
                     }
 
-                    return displayTeams.map((team: any, index) => {
+                    // Sort by score (lowest is best in round scoring)
+                    const sorted = displayTeams.sort((a: any, b: any) => {
+                      const aScore = seasonStandings[a.id]?.total ?? 9999;
+                      const bScore = seasonStandings[b.id]?.total ?? 9999;
+                      return aScore - bScore;
+                    });
+
+                    return sorted.map((team: any, index) => {
                       const member = members.find(m => m.user_id === team.user_id)
                       const isPlaceholder = !team.user_id;
+                      const standing = seasonStandings[team.id];
+                      const hasScore = standing && (standing.total !== 0 || standing.tournaments_played > 0);
 
                       return (
                         <div key={team.id} className="p-4 flex items-center justify-between hover:bg-surface-800/50 transition-colors group">
@@ -346,14 +369,26 @@ export default function LeagueDashboard() {
                               <div className={`font-bold text-sm ${isPlaceholder ? 'text-surface-600 italic font-medium' : 'text-surface-100'}`}>
                                 {team.team_name}
                               </div>
-                              <div className="text-[10px] text-surface-500 flex items-center gap-1.5 ">
-                                {isPlaceholder ? 'Waiting...' : (member?.profiles?.display_name || 'Owner')}
+                              <div className="text-[10px] text-surface-500 flex items-center gap-1.5">
+                                {isPlaceholder ? 'Waiting...' : (
+                                  <>
+                                    <span>{member?.profiles?.display_name || 'Owner'}</span>
+                                    {standing && standing.tournaments_played > 0 && (
+                                      <>
+                                        <span className="w-1 h-1 rounded-full bg-surface-700" />
+                                        <span>{standing.tournaments_played} {standing.tournaments_played === 1 ? 'tourney' : 'tourneys'}</span>
+                                      </>
+                                    )}
+                                  </>
+                                )}
                               </div>
                             </div>
                           </div>
                           <div className="text-right">
-                            <div className="text-lg font-black text-surface-50 font-display leading-none">0</div>
-                            <div className="text-[8px] text-surface-500 uppercase tracking-widest font-bold">Pts</div>
+                            <div className={`text-lg font-black font-display leading-none ${hasScore ? scoreColor(standing.total) : 'text-surface-600'}`}>
+                              {hasScore ? formatScore(standing.total) : 'E'}
+                            </div>
+                            <div className="text-[8px] text-surface-500 uppercase tracking-widest font-bold">Total</div>
                           </div>
                         </div>
                       )
@@ -442,6 +477,12 @@ export default function LeagueDashboard() {
 
         {activeTab === 'schedule' && (
           <ScheduleTab 
+            league={league} 
+          />
+        )}
+
+        {activeTab === 'leaderboard' && (
+          <LeaderboardTab 
             league={league} 
           />
         )}
@@ -549,9 +590,102 @@ export default function LeagueDashboard() {
                    )}
 
                    {settingsTab === 'scoring' && (
-                     <div className="p-8 text-center bg-surface-900/50 rounded-xl border border-surface-700/50">
-                       <h3 className="text-lg font-bold text-surface-100 mb-2">Scoring Settings</h3>
-                       <p className="text-surface-400">Scoring configuration will be implemented in a future phase.</p>
+                     <div className="space-y-6 max-w-2xl">
+                       <h3 className="text-sm font-black text-surface-500 uppercase tracking-widest mb-4">Scoring Options</h3>
+
+                       {/* Option 1: Round Scoring (Active) */}
+                       <div className="bg-surface-900/50 rounded-xl border-2 border-primary-500/30 overflow-hidden">
+                         <div className="p-4 bg-primary-900/20 border-b border-primary-500/20 flex items-center justify-between">
+                           <div className="flex items-center gap-3">
+                             <div className="w-8 h-8 rounded-lg bg-primary-600 flex items-center justify-center text-surface-900 font-black text-sm">1</div>
+                             <div>
+                               <h4 className="font-bold text-surface-100">Round Scoring</h4>
+                               <p className="text-[10px] text-surface-400 uppercase tracking-wider">Total strokes +/- par per round</p>
+                             </div>
+                           </div>
+                           <span className="px-3 py-1 bg-primary-600 text-surface-900 text-[9px] font-black uppercase tracking-widest rounded-lg shadow-glow/10">Active</span>
+                         </div>
+                         <div className="p-5 space-y-4">
+                           <div>
+                             <div className="text-xs font-black text-surface-400 uppercase tracking-widest mb-2">Example Scoring</div>
+                             <div className="grid grid-cols-5 gap-2 text-center">
+                               {[
+                                 { label: 'R1', value: '-3', color: 'text-green-400' },
+                                 { label: 'R2', value: '-4', color: 'text-green-400' },
+                                 { label: 'R3', value: '-3', color: 'text-green-400' },
+                                 { label: 'R4', value: '-1', color: 'text-green-400' },
+                                 { label: 'TOT', value: '-11', color: 'text-green-400 font-display' }
+                               ].map(r => (
+                                 <div key={r.label} className="bg-surface-800/50 border border-surface-700/30 rounded-lg py-2">
+                                   <div className="text-[9px] text-surface-600 uppercase font-black">{r.label}</div>
+                                   <div className={`text-sm font-bold ${r.color}`}>{r.value}</div>
+                                 </div>
+                               ))}
+                             </div>
+                           </div>
+
+                           <div className="bg-red-500/5 border border-red-500/10 rounded-lg p-4">
+                             <div className="text-xs font-black text-red-400 uppercase tracking-widest mb-2">⚠️ Missed Cut Penalty</div>
+                             <ol className="text-xs text-surface-400 space-y-1 list-decimal list-inside">
+                               <li>Identify the <span className="text-surface-200 font-bold">10 worst players who made the cut</span></li>
+                               <li>Calculate their <span className="text-surface-200 font-bold">average score to par</span> for R3 & R4 (rounded)</li>
+                               <li>Compare to a <span className="text-surface-200 font-bold">minimum penalty of +4</span></li>
+                               <li>Use whichever value is <span className="text-surface-200 font-bold">greater</span></li>
+                             </ol>
+                           </div>
+                         </div>
+                       </div>
+
+                       {/* Option 2: Hole Scoring (Coming Soon) */}
+                       <div className="bg-surface-900/50 rounded-xl border border-surface-700/50 overflow-hidden opacity-60">
+                         <div className="p-4 bg-surface-900/40 border-b border-surface-700/50 flex items-center justify-between">
+                           <div className="flex items-center gap-3">
+                             <div className="w-8 h-8 rounded-lg bg-surface-700 flex items-center justify-center text-surface-400 font-black text-sm">2</div>
+                             <div>
+                               <h4 className="font-bold text-surface-300">Hole Scoring</h4>
+                               <p className="text-[10px] text-surface-500 uppercase tracking-wider">Points per hole result + add-ons</p>
+                             </div>
+                           </div>
+                           <span className="px-3 py-1 bg-surface-700 text-surface-400 text-[9px] font-black uppercase tracking-widest rounded-lg">Coming Soon</span>
+                         </div>
+                         <div className="p-5 space-y-4">
+                           <div>
+                             <div className="text-xs font-black text-surface-500 uppercase tracking-widest mb-2">Points Per Hole</div>
+                             <div className="grid grid-cols-5 gap-2 text-center">
+                               {[
+                                 { label: 'Eagle+', value: '+7', color: 'text-green-400' },
+                                 { label: 'Birdie', value: '+3', color: 'text-green-400' },
+                                 { label: 'Par', value: '+0.5', color: 'text-surface-300' },
+                                 { label: 'Bogey', value: '-1', color: 'text-red-400' },
+                                 { label: 'Dbl+', value: '-3', color: 'text-red-400' }
+                               ].map(r => (
+                                 <div key={r.label} className="bg-surface-800/50 border border-surface-700/30 rounded-lg py-2">
+                                   <div className="text-[9px] text-surface-600 uppercase font-black">{r.label}</div>
+                                   <div className={`text-sm font-bold ${r.color}`}>{r.value}</div>
+                                 </div>
+                               ))}
+                             </div>
+                           </div>
+
+                           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                             <div className="bg-surface-800/30 border border-surface-700/30 rounded-lg p-3">
+                               <div className="text-[9px] font-black text-surface-500 uppercase tracking-widest mb-2">🏅 Overall Finish Bonus</div>
+                               <div className="text-[10px] text-surface-500 space-y-0.5">
+                                 <div>1st: +30 • 2nd: +20 • 3rd: +18</div>
+                                 <div>4th: +16 • 5th: +14 • 6-7th: +10-12</div>
+                                 <div>8-10th: +6-8 • 11-40th: +1-5</div>
+                               </div>
+                             </div>
+                             <div className="bg-surface-800/30 border border-surface-700/30 rounded-lg p-3">
+                               <div className="text-[9px] font-black text-surface-500 uppercase tracking-widest mb-2">⭐ Round Bonuses</div>
+                               <div className="text-[10px] text-surface-500 space-y-0.5">
+                                 <div>5+ Birdies in a Round: +5pts</div>
+                                 <div>No Bogeys or Worse: +5pts</div>
+                               </div>
+                             </div>
+                           </div>
+                         </div>
+                       </div>
                      </div>
                    )}
 

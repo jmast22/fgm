@@ -95,7 +95,8 @@ export default function RosterTab({ league, teams }: RosterTabProps) {
   useEffect(() => {
     if (initialLoadRef.current || !selectedTeamId || !selectedTournamentId || !lineup.length) return
     const team = teams.find(t => t.id === selectedTeamId)
-    if (team?.user_id !== user?.id) return
+    const isOwner = team?.user_id === user?.id
+    if (!isOwner && !isCommish) return
     
     const selectedTournament = tournaments.find(t => t.id === selectedTournamentId)
     const isLocked = selectedTournament?.status === 'completed' || selectedTournament?.status === 'active'

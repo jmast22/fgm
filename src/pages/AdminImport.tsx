@@ -167,6 +167,37 @@ const AdminImport = () => {
           </div>
         </div>
       </section>
+
+      {/* Seed Scores */}
+      <section className="bg-white dark:bg-gray-800 p-6 rounded-xl shadow-md border border-gray-100 dark:border-gray-700">
+        <h2 className="text-xl font-semibold mb-4 text-gray-800 dark:text-gray-100">4. Seed Tournament Scores</h2>
+        <p className="text-sm text-gray-500 mb-4">Generate realistic mock round scores for The Players Championship. This will populate <code>golfer_round_stats</code> with R1-R4 data including cut simulation.</p>
+        <div className="flex items-center gap-4">
+          <button 
+            onClick={async () => {
+              setIsLoading(true);
+              setStatus('Seeding Players Championship scores...');
+              try {
+                const { seedPlayersChampionship } = await import('../services/seedScores');
+                const result = await seedPlayersChampionship();
+                if (result.success) {
+                  setStatus(`✅ Seeded ${result.inserted} records! ${result.madeCut} made cut, ${result.missedCut} missed cut.`);
+                } else {
+                  setStatus(`❌ Seed failed: ${result.error}`);
+                }
+              } catch (err: any) {
+                setStatus(`Error seeding scores: ${err.message}`);
+              } finally {
+                setIsLoading(false);
+              }
+            }}
+            disabled={isLoading}
+            className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 transition-colors whitespace-nowrap"
+          >
+            🌱 Seed Players Championship Scores
+          </button>
+        </div>
+      </section>
       
       {/* Note about RLS */}
       <div className="bg-yellow-50 dark:bg-yellow-900 border-l-4 border-yellow-500 p-4 mt-6 rounded-r-md">
@@ -175,7 +206,7 @@ const AdminImport = () => {
         </h3>
         <p className="text-yellow-700 dark:text-yellow-300 text-sm mt-1">
           Make sure your Row Level Security (RLS) policies permit INSERT operations for your current authenticated user, 
-          or temporarily disable RLS on `golfers`, `golfer_aliases`, `tournaments`, and `tournament_golfers` directly in the Supabase Dashboard to complete data seeding.
+          or temporarily disable RLS on `golfers`, `golfer_aliases`, `tournaments`, `tournament_golfers`, and `golfer_round_stats` directly in the Supabase Dashboard to complete data seeding.
         </p>
       </div>
     </div>

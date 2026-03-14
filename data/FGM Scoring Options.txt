@@ -1,0 +1,48 @@
+FGM Scoring Options
+
+1. Round Scoring (total strokes +/- par):
+Example:
+Round 1: -3
+Round 2: -4
+Round 3: -3
+Round 4: -1
+Total: -11
+
+Missed Cut Penalty:
+A. Identify the **10 worst players who made the cut** (highest overall scores).
+B. Calculate their **average score to par for each round** (be sure to round, no decimals).
+C. Compare that average to a **minimum penalty of +4**.
+D. Use whichever value is **greater**.
+E. Do this after round 3 and round 4. 
+
+2. Hole Scoring:
+Eagle (or better): +7pts
+Birdie: +3pts
+Par: +.5pts
+Bogey: -1pt
+Double Bogey (or worse): -3pts
+
+Add Ons Available for Option 2:
+Overall Finish:
+1st Place Bonus: +30pts
+2nd Place Bonus: +20pts
+3rd Place Bonus: +18pts
+4th Place Bonus: +16pts 
+5th Place Bonus: +14pts
+6th Place Bonus: +12pts
+7th Place Bonus: +10pts
+8th Place Bonus: +8pts
+9th Place Bonus: +7pts
+10th Place Bonus: +6pts
+11th - 15th Place Bonus: +5pts
+16th - 20th Place Bonus: +4pts
+21st - 25th Place Bonus: +3pts
+26th - 30th Place Bonus: +2pts
+31st - 40th Place Bonus: +1pt
+41st+ Place Bonus: 0pts
+
+Bonuses:
+Five or more Birdies In a Round: +5pts
+No Bogey's or Worse In a Round: +5pts
+
+
