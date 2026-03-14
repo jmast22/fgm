@@ -138,14 +138,18 @@
 
 ---
 
-## Phase 11 — Scraper & Live Stats
+## Phase 11 — Scraper & Live Stats ✅
 
-- [ ] Research PGATour.com leaderboard data format
-- [ ] Build scraper worker (`scrapeRoundStats.ts`)
-- [ ] Golfer name matching via `golfer_aliases`
-- [ ] Scheduling strategy (manual trigger after Thu/Fri/Sat/Sun rounds)
-- [ ] Error handling (logging, retry, partial failure)
-- [ ] Manual trigger UI (admin button, last run status)
+- [x] Research PGATour.com leaderboard data format (Using ESPN API)
+- [x] Build scraper worker (`scraperService.ts`)
+- [x] Research & Test ESPN API (Round Scoring only)
+- [x] Create Scraper Service logic
+- [x] Match Scraped Names to DB Golfers (Exact + Normalized + Aliases)
+- [x] Implement error handling & unmatched name reporting
+- [x] Add Admin UI for manual scrape trigger
+- [x] **Bug Fix**: Refined cut status detection logic to handle players who made the cut but haven't teed off for the current round.
+- [x] **Schema**: Standardized RLS policies for admin data management.
+- [x] Manual trigger UI (Admin dashboard section)
 
 ---
 
