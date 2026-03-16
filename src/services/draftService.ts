@@ -280,6 +280,8 @@ export const draftService = {
       .from('drafts')
       .select('id')
       .eq('league_id', leagueId)
+      .order('created_at', { ascending: false })
+      .limit(1)
       .maybeSingle()
 
     if (!draft) return
@@ -394,18 +396,24 @@ export const draftService = {
         .eq('id', existingDraft.id)
       if (error) throw error
     } else {
-      const tournamentId = await this.getUpcomingTournamentId()
-      const { error } = await supabase
-        .from('drafts')
-        .insert({
-          league_id: leagueId,
-          draft_order: teamIds,
-          status: 'pending',
-          current_round: 1,
-          current_pick: 1,
-          tournament_id: tournamentId
-        })
-      if (error) throw error
+      // Only create a new pending draft record if we are in tournament redraft mode
+      // or if no draft exists yet.
+      const { data: league } = await supabase.from('leagues').select('draft_cycle').eq('id', leagueId).single()
+      
+      if (!existingDraft || league?.draft_cycle === 'tournament') {
+        const tournamentId = await this.getUpcomingTournamentId()
+        const { error } = await supabase
+          .from('drafts')
+          .insert({
+            league_id: leagueId,
+            draft_order: teamIds,
+            status: 'pending',
+            current_round: 1,
+            current_pick: 1,
+            tournament_id: tournamentId
+          })
+        if (error) throw error
+      }
     }
   }
 }
