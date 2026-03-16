@@ -4,6 +4,7 @@ import { scoringService, formatScore, scoreColor } from '../../services/scoringS
 import { supabase } from '../../lib/supabase'
 import type { League, Team } from '../../services/leagueService'
 import { useAuth } from '../../context/AuthContext'
+import { tournamentService } from '../../services/tournamentService'
 
 interface GolfersTabProps {
   league: League
@@ -32,7 +33,10 @@ export default function GolfersTab({ league, teams }: GolfersTabProps) {
   const [showDropModal, setShowDropModal] = useState<string | null>(null)
   const [isDropping, setIsDropping] = useState(false)
 
+  const [isLocked, setIsLocked] = useState(false)
+
   const myTeam = teams.find(t => t.user_id === user?.id)
+  const isCommish = league.commissioner_id === user?.id
 
   const loadData = async () => {
     try {
@@ -43,6 +47,11 @@ export default function GolfersTab({ league, teams }: GolfersTabProps) {
         .order('name', { ascending: true })
 
       if (!golfers) return
+
+      const tData = await tournamentService.getTournaments()
+
+      const activeOrUpcoming = tData.find(t => t.status === 'active' || t.status === 'upcoming')
+      setIsLocked(activeOrUpcoming?.status === 'active')
 
       // 2. Get OWGR rankings from latest tournament
       const { data: latestTourney } = await supabase
@@ -170,6 +179,10 @@ export default function GolfersTab({ league, teams }: GolfersTabProps) {
 
   const handleAdd = async (golferId: string) => {
     if (!myTeam) return
+    if (isLocked && !isCommish) {
+      alert("Transactions are locked while a tournament is active.")
+      return
+    }
 
     if (myRoster.length >= league.roster_size) {
       setShowDropModal(golferId)
@@ -187,6 +200,10 @@ export default function GolfersTab({ league, teams }: GolfersTabProps) {
 
   const handleDropAndAdd = async (dropGolferId: string) => {
     if (!myTeam || !showDropModal) return
+    if (isLocked && !isCommish) {
+      alert("Transactions are locked while a tournament is active.")
+      return
+    }
     setIsDropping(true)
     try {
       await rosterService.dropGolfer(myTeam.id, dropGolferId)
@@ -232,6 +249,11 @@ export default function GolfersTab({ league, teams }: GolfersTabProps) {
                 {allGolfers.length} Total
               </span>
             </p>
+            {isLocked && (
+              <p className="text-amber-500 text-xs mt-2 font-bold flex items-center gap-1">
+                🔒 Transactions are locked while the tournament is active.
+              </p>
+            )}
           </div>
           <div className="flex flex-wrap items-center gap-3">
             {/* On Roster Toggle */}
@@ -323,10 +345,11 @@ export default function GolfersTab({ league, teams }: GolfersTabProps) {
                   <td className="py-4 px-4 text-right">
                     {myTeam && !golfer.is_rostered && (
                       <button 
-                        className="px-4 py-1.5 rounded-lg bg-primary-600 text-surface-900 text-xs font-black shadow-glow/10 hover:bg-primary-500 active:scale-95 transition-all uppercase tracking-wider"
+                        className={`px-4 py-1.5 rounded-lg text-xs font-black shadow-glow/10 transition-all uppercase tracking-wider ${isLocked && !isCommish ? 'bg-surface-700 text-surface-400 cursor-not-allowed' : 'bg-primary-600 text-surface-900 hover:bg-primary-500 active:scale-95'}`}
                         onClick={() => handleAdd(golfer.id)}
+                        disabled={isLocked && !isCommish}
                       >
-                        {league.waiver_rule === 'Free Agency' ? 'Add' : 'Claim'}
+                        {league.waiver_rule === 'Free Agency' || league.draft_cycle === 'tournament' ? 'Add' : 'Claim'}
                       </button>
                     )}
                   </td>

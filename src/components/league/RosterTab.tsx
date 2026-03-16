@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { rosterService } from '../../services/rosterService'
 import { tournamentService } from '../../services/tournamentService'
+import { scoringService, formatScore, scoreColor, type GolferTournamentScore } from '../../services/scoringService'
 import type { LineupGolfer } from '../../services/rosterService'
 import type { Tournament } from '../../services/tournamentService'
 import type { League, Team } from '../../services/leagueService'
@@ -17,6 +18,7 @@ export default function RosterTab({ league, teams }: RosterTabProps) {
   const [selectedTournamentId, setSelectedTournamentId] = useState<string>('')
   const [tournaments, setTournaments] = useState<Tournament[]>([])
   const [lineup, setLineup] = useState<LineupGolfer[]>([])
+  const [golferScores, setGolferScores] = useState<Record<string, GolferTournamentScore>>({})
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [isCommishUnlocked, setIsCommishUnlocked] = useState(false)
@@ -70,11 +72,22 @@ export default function RosterTab({ league, teams }: RosterTabProps) {
     async function loadData() {
       setLoading(true)
       try {
-        const [r, l] = await Promise.all([
+        const [r, l, rawStats] = await Promise.all([
           rosterService.getTeamRoster(selectedTeamId),
-          rosterService.getWeeklyLineup(selectedTeamId, selectedTournamentId)
+          rosterService.getWeeklyLineup(selectedTeamId, selectedTournamentId),
+          scoringService.getTournamentRoundStats(selectedTournamentId)
         ])
         
+        // Process stats
+        const scoreMap: Record<string, GolferTournamentScore> = {}
+        if (rawStats && rawStats.length > 0) {
+           const board = scoringService.buildGolferLeaderboard(rawStats)
+           board.forEach(gs => {
+             scoreMap[gs.golfer_id] = gs
+           })
+        }
+        setGolferScores(scoreMap)
+
         // Merge roster with lineup info
         const mergedLineup = r.map(golfer => {
           const lineupItem = l?.find(li => li.id === golfer.id)
@@ -357,6 +370,7 @@ export default function RosterTab({ league, teams }: RosterTabProps) {
               <GolferRow 
                 key={golfer.id} 
                 golfer={golfer} 
+                score={golferScores[golfer.id]}
                 canEdit={isEditingOwnTeam && !isLocked} 
                 canDrop={isCommish && isCommishUnlocked}
                 onToggle={toggleStarter} 
@@ -390,6 +404,7 @@ export default function RosterTab({ league, teams }: RosterTabProps) {
               <GolferRow 
                 key={golfer.id} 
                 golfer={golfer} 
+                score={golferScores[golfer.id]}
                 canEdit={isEditingOwnTeam && !isLocked} 
                 canDrop={isCommish && isCommishUnlocked}
                 onToggle={toggleStarter} 
@@ -483,6 +498,7 @@ export default function RosterTab({ league, teams }: RosterTabProps) {
 
 function GolferRow({ 
   golfer, 
+  score,
   canEdit, 
   canDrop,
   onToggle, 
@@ -490,6 +506,7 @@ function GolferRow({
   onDrop
 }: { 
   golfer: LineupGolfer, 
+  score?: GolferTournamentScore,
   canEdit: boolean, 
   canDrop?: boolean,
   onToggle: (id: string) => void,
@@ -517,8 +534,41 @@ function GolferRow({
         </div>
       </div>
       
-      <div className="flex items-center gap-2">
-        {canEdit && (
+      <div className="flex items-center gap-4">
+        {score && (
+          <div className="flex items-center gap-3 bg-surface-900/50 px-3 py-1.5 rounded-xl border border-surface-700/50 shrink-0">
+             <div className="flex flex-col items-center min-w-[20px]">
+                <span className="text-[8px] font-black tracking-widest text-surface-600 uppercase">R1</span>
+                <span className={`text-[10px] font-bold ${scoreColor(score.r1)}`}>{formatScore(score.r1)}</span>
+             </div>
+             <div className="flex flex-col items-center min-w-[20px]">
+                <span className="text-[8px] font-black tracking-widest text-surface-600 uppercase">R2</span>
+                <span className={`text-[10px] font-bold ${scoreColor(score.r2)}`}>{formatScore(score.r2)}</span>
+             </div>
+             <div className="flex flex-col items-center min-w-[20px]">
+                <span className="text-[8px] font-black tracking-widest text-surface-600 uppercase">R3</span>
+                <span className={`text-[10px] font-bold ${score.is_penalty ? 'text-red-400/60 italic' : scoreColor(score.r3)}`}>
+                  {formatScore(score.r3)}{score.is_penalty ? '*' : ''}
+                </span>
+             </div>
+             <div className="flex flex-col items-center min-w-[20px]">
+                <span className="text-[8px] font-black tracking-widest text-surface-600 uppercase">R4</span>
+                <span className={`text-[10px] font-bold ${score.is_penalty ? 'text-red-400/60 italic' : scoreColor(score.r4)}`}>
+                  {formatScore(score.r4)}{score.is_penalty ? '*' : ''}
+                </span>
+             </div>
+             <div className="w-px h-6 bg-surface-700 mx-1"></div>
+             <div className="flex flex-col items-center min-w-[30px]">
+                <span className="text-[8px] font-black tracking-widest text-surface-600 uppercase">TOT</span>
+                <span className={`text-sm font-black font-display leading-none mt-0.5 ${scoreColor(score.total)}`}>
+                  {formatScore(score.total)}
+                </span>
+             </div>
+          </div>
+        )}
+
+        <div className="flex items-center gap-2">
+          {canEdit && (
           <>
             <button
               onClick={() => onToggleTradeBlock(golfer.id)}
@@ -551,7 +601,8 @@ function GolferRow({
               {golfer.is_starter ? 'Bench' : 'Start'}
             </button>
           </>
-        )}
+          )}
+        </div>
       </div>
     </div>
   )
