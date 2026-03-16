@@ -28,12 +28,20 @@ export default function LeagueDashboard() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [startingDraft, setStartingDraft] = useState(false)
-  const [editSettings, setEditSettings] = useState({
+  const [editSettings, setEditSettings] = useState<{
+    name: string,
+    roster_size: number,
+    weekly_starters: number,
+    max_teams: number,
+    waiver_rule: string,
+    draft_cycle: 'season' | 'tournament'
+  }>({
     name: '',
     roster_size: 10,
     weekly_starters: 6,
     max_teams: 12,
-    waiver_rule: 'Free Agency'
+    waiver_rule: 'Free Agency',
+    draft_cycle: 'season'
   })
   const [editTeamNames, setEditTeamNames] = useState<Record<string, string>>({})
   const [editDraftOrder, setEditDraftOrder] = useState<string[]>([])
@@ -57,7 +65,8 @@ export default function LeagueDashboard() {
           roster_size: l.roster_size,
           weekly_starters: l.weekly_starters,
           max_teams: l.max_teams || 12,
-          waiver_rule: l.waiver_rule || 'Free Agency'
+          waiver_rule: l.waiver_rule || 'Free Agency',
+          draft_cycle: l.draft_cycle || 'season'
         })
         setTeams(t)
         setMembers(m)
@@ -583,6 +592,18 @@ export default function LeagueDashboard() {
                           <option value="Free Agency">Free Agency (Immediate)</option>
                           <option value="Weekly Waivers">Weekly Waivers</option>
                           <option value="Waiver Wire">Waiver Wire (Rolling)</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-surface-400 text-xs font-bold uppercase tracking-wider mb-2">Draft Cycle</label>
+                        <select 
+                          value={editSettings.draft_cycle}
+                          onChange={e => setEditSettings({...editSettings, draft_cycle: (e.target.value as 'season'|'tournament')})}
+                          disabled={!isCommish}
+                          className="w-full bg-surface-900 border border-surface-700 rounded-xl px-4 py-3 text-surface-100 focus:ring-2 focus:ring-primary-500/50 outline-none transition-all disabled:opacity-50"
+                        >
+                          <option value="season">Season Long</option>
+                          <option value="tournament">Per Tournament</option>
                         </select>
                       </div>
                      </div>

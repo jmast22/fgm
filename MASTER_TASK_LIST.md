@@ -207,3 +207,19 @@
 - [ ] Commissioner toggle between Round Scoring and Hole Scoring
 - [ ] Hole-by-hole golfer detail view (expandable in Leaderboard)
 - [ ] Store hole-by-hole data in new `golfer_hole_stats` table
+
+---
+
+## Phase 15 — Tournament Redrafting & Roster History
+
+- [x] Add `draft_cycle` column to `leagues` table (options: 'season', 'tournament' - default: 'season').
+- [x] Update League Settings (Core Info) UI to include a "Draft Cycle" dropdown selection.
+- [x] Update League Settings (Draft Order) to allow saving a new draft order per tournament when `draft_cycle` is 'tournament'.
+- [x] Update drafting engine to support initiating a fresh, new draft (no keepers) for each tournament if `draft_cycle` is 'tournament'.
+- [x] Associate drafts in the `drafts` table with a specific `tournament_id` to preserve historical draft boards.
+- [x] Add a tournament filter dropdown on the "Draft" tab to view past tournament draft boards.
+- [ ] Modify Waivers logic: If `draft_cycle` is 'tournament', waiver rule automatically behaves as "free agency" (unrestricted add/drops) until the tournament locks.
+- [ ] Update "Roster" tab to display player scores mirroring the individual golfers panel in the Leaderboard, refreshing after each scrape.
+- [ ] Ensure the "Roster" tab tournament filter accurately displays historical (locked) rosters for previous tournaments.
+- [ ] Verify that cumulative scoring correctly groups points by team across multiple tournaments regardless of roster turnover.
+

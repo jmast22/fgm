@@ -11,6 +11,7 @@ export interface League {
   draft_status: 'pending' | 'active' | 'completed'
   invite_code: string
   waiver_rule: string
+  draft_cycle?: 'season' | 'tournament'
   trade_deadline?: string
   created_at?: string
   updated_at?: string

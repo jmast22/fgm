@@ -19,6 +19,12 @@ export default function RosterTab({ league, teams }: RosterTabProps) {
   const [lineup, setLineup] = useState<LineupGolfer[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [isCommishUnlocked, setIsCommishUnlocked] = useState(false)
+  const [showAddModal, setShowAddModal] = useState(false)
+  const [availableGolfers, setAvailableGolfers] = useState<any[]>([])
+  const [loadingAvailable, setLoadingAvailable] = useState(false)
+  const [addingGolfer, setAddingGolfer] = useState<string | null>(null)
+  const [modalSearchTerm, setModalSearchTerm] = useState('')
   const initialLoadRef = useRef(true)
 
   // Default selected team to user's team, but fallback to first team
@@ -99,7 +105,7 @@ export default function RosterTab({ league, teams }: RosterTabProps) {
     if (!isOwner && !isCommish) return
     
     const selectedTournament = tournaments.find(t => t.id === selectedTournamentId)
-    const isLocked = selectedTournament?.status === 'completed' || selectedTournament?.status === 'active'
+    const isLocked = (selectedTournament?.status === 'completed' || selectedTournament?.status === 'active') && !isCommishUnlocked
     if (isLocked) return
 
     const timer = setTimeout(async () => {
@@ -135,7 +141,7 @@ export default function RosterTab({ league, teams }: RosterTabProps) {
       return
     }
 
-    setLineup(prev => prev.map(g => 
+    setLineup(prev => prev.map((g: LineupGolfer) => 
       g.id === golferId ? { ...g, is_starter: !g.is_starter } : g
     ))
   }
@@ -152,7 +158,7 @@ export default function RosterTab({ league, teams }: RosterTabProps) {
     const newStatus = !golfer.is_on_trade_block
     
     // Optimistic UI update
-    setLineup(prev => prev.map(g => 
+    setLineup(prev => prev.map((g: LineupGolfer) => 
       g.id === golferId ? { ...g, is_on_trade_block: newStatus } : g
     ))
 
@@ -161,9 +167,62 @@ export default function RosterTab({ league, teams }: RosterTabProps) {
     } catch (err) {
       console.error('Failed to toggle trade block:', err)
       // Revert on error
-      setLineup(prev => prev.map(g => 
+      setLineup(prev => prev.map((g: LineupGolfer) => 
         g.id === golferId ? { ...g, is_on_trade_block: !newStatus } : g
       ))
+    }
+  }
+
+  const handleOpenAddModal = async () => {
+    setShowAddModal(true)
+    setLoadingAvailable(true)
+    try {
+      const available = await rosterService.getAvailableGolfers(league.id)
+      setAvailableGolfers(available)
+    } catch (err) {
+      console.error('Failed to load available golfers:', err)
+    } finally {
+      setLoadingAvailable(false)
+    }
+  }
+
+  const handleAddAvailableGolfer = async (golferId: string) => {
+    if (!selectedTeamId) return
+    setAddingGolfer(golferId)
+    try {
+      await rosterService.addGolfer(selectedTeamId, golferId)
+      
+      // Refresh lineup
+      const [r, l] = await Promise.all([
+        rosterService.getTeamRoster(selectedTeamId),
+        rosterService.getWeeklyLineup(selectedTeamId, selectedTournamentId)
+      ])
+      
+      const mergedLineup = r.map(golfer => {
+        const lineupItem = l?.find(li => li.id === golfer.id)
+        return {
+          ...golfer,
+          is_starter: lineupItem ? lineupItem.is_starter : false
+        }
+      })
+      setLineup(mergedLineup)
+      setShowAddModal(false)
+    } catch (err: any) {
+      alert('Error adding golfer: ' + err.message)
+    } finally {
+      setAddingGolfer(null)
+    }
+  }
+
+  const handleDropGolfer = async (golferId: string) => {
+    if (!selectedTeamId) return
+    if (!confirm('Are you sure you want to drop this golfer?')) return
+    
+    try {
+      await rosterService.dropGolfer(selectedTeamId, golferId)
+      setLineup(prev => prev.filter((g: LineupGolfer) => g.id !== golferId))
+    } catch (err: any) {
+      alert('Error dropping golfer: ' + err.message)
     }
   }
 
@@ -172,7 +231,8 @@ export default function RosterTab({ league, teams }: RosterTabProps) {
   const myTeam = teams.find(t => t.user_id === user?.id)
   const isEditingOwnTeam = selectedTeamId === myTeam?.id || isCommish
   const selectedTournament = tournaments.find(t => t.id === selectedTournamentId)
-  const isLocked = selectedTournament?.status === 'completed' || selectedTournament?.status === 'active'
+  const isActuallyLocked = selectedTournament?.status === 'completed' || selectedTournament?.status === 'active'
+  const isLocked = isActuallyLocked && !isCommishUnlocked
 
   const starters = lineup.filter(g => g.is_starter)
   const bench = lineup.filter(g => !g.is_starter)
@@ -258,9 +318,27 @@ export default function RosterTab({ league, teams }: RosterTabProps) {
         </div>
       </div>
 
-      {isLocked && (
-        <div className="bg-amber-500/5 border border-amber-500/10 rounded-xl p-3 text-center text-amber-500/80 text-xs font-bold uppercase tracking-widest flex items-center justify-center gap-2">
-          <span>🔒 Lineup locked for {selectedTournament?.name}</span>
+      {isActuallyLocked && (
+        <div className={`border rounded-xl p-3 text-center text-xs font-bold uppercase tracking-widest flex items-center justify-center gap-4 transition-all ${
+          isCommishUnlocked 
+            ? 'bg-primary-500/10 border-primary-500/20 text-primary-400' 
+            : 'bg-amber-500/5 border border-amber-500/10 text-amber-500/80'
+        }`}>
+          <div className="flex items-center gap-2">
+            <span>{isCommishUnlocked ? '🔓' : '🔒'} Lineup {isCommishUnlocked ? 'Unlocked (Commish)' : 'locked'} for {selectedTournament?.name}</span>
+          </div>
+          {isCommish && (
+            <button 
+              onClick={() => setIsCommishUnlocked(!isCommishUnlocked)}
+              className={`px-3 py-1 rounded-lg border transition-all hover:scale-105 active:scale-95 ${
+                isCommishUnlocked
+                  ? 'bg-amber-500/20 border-amber-500/30 text-amber-500'
+                  : 'bg-primary-500/20 border-primary-500/30 text-primary-400'
+              }`}
+            >
+              {isCommishUnlocked ? 'Relock Roster' : 'Unlock Roster'}
+            </button>
+          )}
         </div>
       )}
 
@@ -275,13 +353,15 @@ export default function RosterTab({ league, teams }: RosterTabProps) {
           {starters.length === 0 ? (
             <div className="p-8 text-center text-surface-600 italic text-xs">No starters selected</div>
           ) : (
-            starters.map(golfer => (
+            starters.map((golfer: LineupGolfer) => (
               <GolferRow 
                 key={golfer.id} 
                 golfer={golfer} 
                 canEdit={isEditingOwnTeam && !isLocked} 
+                canDrop={isCommish && isCommishUnlocked}
                 onToggle={toggleStarter} 
                 onToggleTradeBlock={toggleTradeBlock}
+                onDrop={handleDropGolfer}
               />
             ))
           )}
@@ -289,25 +369,114 @@ export default function RosterTab({ league, teams }: RosterTabProps) {
 
         {/* Bench Section */}
         <div className="px-3 py-1.5 border-y border-surface-700/50 bg-surface-900/40 flex items-center justify-between">
-           <h3 className="text-[10px] font-black text-surface-400 uppercase tracking-widest">Bench</h3>
+           <div className="flex items-center gap-3">
+             <h3 className="text-[10px] font-black text-surface-400 uppercase tracking-widest">Bench</h3>
+             {isCommish && isCommishUnlocked && (
+               <button 
+                 onClick={handleOpenAddModal}
+                 className="px-2 py-0.5 bg-primary-500/10 border border-primary-500/20 rounded text-[9px] font-black text-primary-400 uppercase tracking-tighter hover:bg-primary-500 hover:text-surface-900 transition-all"
+               >
+                 + Add from Waiver
+               </button>
+             )}
+           </div>
            <span className="text-[9px] text-surface-500 font-bold uppercase tracking-tighter">Reserved</span>
         </div>
         <div className="divide-y divide-surface-700/50">
           {bench.length === 0 ? (
             <div className="p-8 text-center text-surface-600 italic text-xs">No golfers on bench</div>
           ) : (
-            bench.map(golfer => (
+            bench.map((golfer: LineupGolfer) => (
               <GolferRow 
                 key={golfer.id} 
                 golfer={golfer} 
                 canEdit={isEditingOwnTeam && !isLocked} 
+                canDrop={isCommish && isCommishUnlocked}
                 onToggle={toggleStarter} 
                 onToggleTradeBlock={toggleTradeBlock}
+                onDrop={handleDropGolfer}
               />
             ))
           )}
         </div>
       </div>
+
+      {/* Add Golfer Modal */}
+      {showAddModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-surface-950/90 backdrop-blur-md">
+          <div className="bg-surface-800 border border-surface-700 rounded-3xl w-full max-w-2xl shadow-2xl overflow-hidden flex flex-col max-h-[80vh]">
+            <div className="p-6 border-b border-surface-700 flex items-center justify-between">
+              <div>
+                <h2 className="text-xl font-bold text-surface-50">Add Player from Waiver</h2>
+                <p className="text-surface-400 text-xs mt-1">Select an available golfer to add to this team.</p>
+              </div>
+              <button 
+                onClick={() => setShowAddModal(false)}
+                className="w-10 h-10 rounded-xl bg-surface-900 border border-surface-700 flex items-center justify-center text-surface-400 hover:text-surface-100 transition-colors"
+              >
+                ✕
+              </button>
+            </div>
+            
+            <div className="p-4 border-b border-surface-700/50 bg-surface-900/30">
+              <div className="relative">
+                <input
+                  type="text"
+                  placeholder="Search available golfers..."
+                  value={modalSearchTerm}
+                  onChange={(e) => setModalSearchTerm(e.target.value)}
+                  className="w-full bg-surface-900 border border-surface-700 rounded-xl px-4 py-2 text-sm text-surface-100 focus:ring-2 focus:ring-primary-500/50 outline-none transition-all pl-10"
+                />
+                <span className="absolute left-3 top-2 text-surface-500">🔍</span>
+              </div>
+            </div>
+            
+            <div className="p-4 overflow-y-auto flex-1 space-y-2">
+              {loadingAvailable ? (
+                <div className="p-12 text-center text-surface-500">Loading available golfers...</div>
+              ) : availableGolfers.length === 0 ? (
+                <div className="p-12 text-center text-surface-500 text-sm">No available golfers found.</div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  {availableGolfers
+                    .filter(g => g.name.toLowerCase().includes(modalSearchTerm.toLowerCase()))
+                    .map(g => (
+                      <div 
+                        key={g.id} 
+                        className="p-3 bg-surface-900 border border-surface-700/50 rounded-xl flex items-center justify-between hover:border-primary-500/30 transition-all"
+                      >
+                        <div>
+                          <div className="font-bold text-surface-100 text-sm">{g.name}</div>
+                          <div className="text-[10px] text-surface-500 flex items-center gap-2">
+                            <span>OWGR: #{g.owg_rank || 'N/A'}</span>
+                            <span className="w-0.5 h-0.5 rounded-full bg-surface-700" />
+                            <span>Age: {g.age || 'N/A'}</span>
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => handleAddAvailableGolfer(g.id)}
+                          disabled={addingGolfer === g.id}
+                          className="px-3 py-1.5 bg-primary-600 text-surface-900 text-[10px] font-black uppercase tracking-widest rounded-lg hover:bg-primary-500 transition-all disabled:opacity-50"
+                        >
+                          {addingGolfer === g.id ? 'Adding...' : 'Add'}
+                        </button>
+                      </div>
+                    ))}
+                </div>
+              )}
+            </div>
+            
+            <div className="p-6 bg-surface-800/50 border-t border-surface-700">
+              <button 
+                onClick={() => setShowAddModal(false)}
+                className="w-full py-3 bg-surface-700 text-surface-100 rounded-xl font-bold hover:bg-surface-600 transition-all"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -315,13 +484,17 @@ export default function RosterTab({ league, teams }: RosterTabProps) {
 function GolferRow({ 
   golfer, 
   canEdit, 
+  canDrop,
   onToggle, 
-  onToggleTradeBlock 
+  onToggleTradeBlock,
+  onDrop
 }: { 
   golfer: LineupGolfer, 
   canEdit: boolean, 
+  canDrop?: boolean,
   onToggle: (id: string) => void,
-  onToggleTradeBlock: (id: string) => void
+  onToggleTradeBlock: (id: string) => void,
+  onDrop?: (id: string) => void
 }) {
   return (
     <div className="p-2.5 md:p-3 flex items-center justify-between hover:bg-surface-800/50 transition-colors group">
@@ -358,6 +531,15 @@ function GolferRow({
             >
               <span className="text-sm">↔️</span>
             </button>
+            {canDrop && (
+              <button
+                onClick={() => onDrop?.(golfer.id)}
+                className="w-8 h-8 rounded-lg flex items-center justify-center bg-red-500/10 text-red-500 border border-red-500/20 hover:bg-red-500 hover:text-white transition-all"
+                title="Drop Golfer"
+              >
+                <span className="text-sm">🗑️</span>
+              </button>
+            )}
             <button 
               onClick={() => onToggle(golfer.id)}
               className={`px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest border transition-all

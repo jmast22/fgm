@@ -15,6 +15,8 @@ export default function DraftResults({ league, teams, onBack }: DraftResultsProp
   const [picks, setPicks] = useState<DraftPick[]>([])
   const [loading, setLoading] = useState(true)
   const [view, setView] = useState<'board' | 'list'>('board')
+  const [selectedTournament, setSelectedTournament] = useState<string>('latest')
+  const [tournaments, setTournaments] = useState<{id: string, name: string}[]>([])
 
   const { user } = useAuth()
   const isCommish = user?.id === league.commissioner_id
@@ -60,11 +62,31 @@ export default function DraftResults({ league, teams, onBack }: DraftResultsProp
   useEffect(() => {
     async function loadResults() {
       try {
-        const d = await draftService.getDraftByLeague(league.id)
-        if (d) {
-          setDraft(d)
-          const p = await draftService.getDraftPicks(d.id)
+        const d = await draftService.getAllDraftsByLeague(league.id)
+        if (d && d.length > 0) {
+          
+          // Get tournament details for these drafts
+          const tIds = d.map(draft => draft.tournament_id).filter(Boolean) as string[]
+          if (tIds.length > 0) {
+            const { supabase } = await import('../../lib/supabase')
+            const { data: tData } = await supabase.from('tournaments')
+              .select('id, name')
+              .in('id', tIds)
+            if (tData) setTournaments(tData)
+          }
+
+          // Select draft based on tournament, defaulting to latest
+          let activeDraft = d[0];
+          if (selectedTournament !== 'latest') {
+            activeDraft = d.find(draft => draft.tournament_id === selectedTournament) || d[0]
+          }
+          
+          setDraft(activeDraft)
+          const p = await draftService.getDraftPicks(activeDraft.id)
           setPicks(p)
+        } else {
+           setDraft(null)
+           setPicks([])
         }
       } catch (err) {
         console.error('Failed to load draft results:', err)
@@ -73,7 +95,7 @@ export default function DraftResults({ league, teams, onBack }: DraftResultsProp
       }
     }
     loadResults()
-  }, [league.id])
+  }, [league.id, selectedTournament])
 
   if (loading) return <div className="p-12 text-center text-surface-400">Loading results...</div>
   if (!draft) return <div className="p-12 text-center text-surface-400">No draft data found.</div>
@@ -216,6 +238,19 @@ export default function DraftResults({ league, teams, onBack }: DraftResultsProp
         </div>
 
         <div className="flex items-center gap-2 bg-surface-900/50 p-1 rounded-lg border border-surface-700/50">
+          {league.draft_cycle === 'tournament' && tournaments.length > 0 && (
+             <select 
+               value={selectedTournament}
+               onChange={e => setSelectedTournament(e.target.value)}
+               className="bg-transparent border-none text-xs font-bold text-surface-400 focus:ring-0 cursor-pointer hover:text-surface-100 transition-colors uppercase"
+             >
+               <option value="latest">Latest Draft</option>
+               {tournaments.map(t => (
+                 <option key={t.id} value={t.id}>{t.name}</option>
+               ))}
+             </select>
+          )}
+          <div className="w-px h-6 bg-surface-700 mx-1 hidden sm:block"></div>
           <button 
             onClick={() => setView('board')}
             className={`px-4 py-1.5 rounded-md text-xs font-bold transition-all ${view === 'board' ? 'bg-primary-600 text-surface-900 shadow-glow/10' : 'text-surface-400 hover:text-surface-100'}`}

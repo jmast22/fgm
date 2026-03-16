@@ -7,6 +7,7 @@ export interface Draft {
   current_round: number
   current_pick: number
   draft_order: string[] // Array of team_ids
+  tournament_id?: string
   created_at: string
 }
 
@@ -30,12 +31,24 @@ export interface DraftTeam {
 }
 
 export const draftService = {
+  // Helper to find the most recent/upcoming tournament that has a field defined
+  async getUpcomingTournamentId(): Promise<string | undefined> {
+    const { data } = await supabase
+      .from('tournament_golfers')
+      .select('tournament_id, tournaments!inner(start_date)')
+      .order('tournaments(start_date)', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    
+    return data?.tournament_id
+  },
+
   // Start the draft for a league
   async startDraft(leagueId: string): Promise<string> {
     // 1. Get league settings
     const { data: league, error: leagueError } = await supabase
       .from('leagues')
-      .select('max_teams')
+      .select('max_teams, draft_cycle')
       .eq('id', leagueId)
       .single()
 
@@ -75,9 +88,11 @@ export const draftService = {
       .from('drafts')
       .select('*')
       .eq('league_id', leagueId)
+      .order('created_at', { ascending: false })
+      .limit(1)
       .maybeSingle()
 
-    if (existingDraft) {
+    if (existingDraft && existingDraft.status !== 'completed') {
       // If we have an existing draft, use its order if ready, otherwise shuffle
       const order = (existingDraft.draft_order && existingDraft.draft_order.length === league.max_teams)
         ? existingDraft.draft_order
@@ -103,6 +118,7 @@ export const draftService = {
       return draft.id
     } else {
       // Create new draft
+      const tournamentId = await this.getUpcomingTournamentId()
       const shuffledIds = [...finalTeamIds].sort(() => Math.random() - 0.5)
 
       const { data: draft, error: draftError } = await supabase
@@ -112,7 +128,9 @@ export const draftService = {
           status: 'active',
           current_round: 1,
           current_pick: 1,
-          draft_order: shuffledIds,
+          draft_order: existingDraft && existingDraft.status === 'completed' && league.draft_cycle === 'tournament' 
+             ? existingDraft.draft_order : shuffledIds,
+          tournament_id: tournamentId
         })
         .select('id')
         .single()
@@ -131,10 +149,23 @@ export const draftService = {
       .from('drafts')
       .select('*')
       .eq('league_id', leagueId)
+      .order('created_at', { ascending: false })
+      .limit(1)
       .maybeSingle()
 
     if (error) throw error
     return data
+  },
+
+  async getAllDraftsByLeague(leagueId: string): Promise<Draft[]> {
+    const { data, error } = await supabase
+      .from('drafts')
+      .select('*')
+      .eq('league_id', leagueId)
+      .order('created_at', { ascending: false })
+
+    if (error) throw error
+    return data || []
   },
 
   async getDraftPicks(draftId: string): Promise<any[]> {
@@ -208,14 +239,7 @@ export const draftService = {
     const pickedIds = picks?.map(p => p.golfer_id) || []
 
     // 2. Find the most recent tournament that has a field defined
-    const { data: latestTourney } = await supabase
-      .from('tournament_golfers')
-      .select('tournament_id, tournaments!inner(start_date)')
-      .order('tournaments(start_date)', { ascending: false })
-      .limit(1)
-      .maybeSingle()
-
-    const tournamentId = latestTourney?.tournament_id
+    const tournamentId = await this.getUpcomingTournamentId()
 
     // 3. Fetch golfers in the field for this tournament, excluding picked ones
     let query = supabase
@@ -348,17 +372,20 @@ export const draftService = {
   async updateDraftOrder(leagueId: string, teamIds: string[]): Promise<void> {
     const { data: existingDraft } = await supabase
       .from('drafts')
-      .select('id')
+      .select('id, status')
       .eq('league_id', leagueId)
+      .order('created_at', { ascending: false })
+      .limit(1)
       .maybeSingle()
 
-    if (existingDraft) {
+    if (existingDraft && existingDraft.status !== 'completed') {
       const { error } = await supabase
         .from('drafts')
         .update({ draft_order: teamIds })
         .eq('id', existingDraft.id)
       if (error) throw error
     } else {
+      const tournamentId = await this.getUpcomingTournamentId()
       const { error } = await supabase
         .from('drafts')
         .insert({
@@ -366,7 +393,8 @@ export const draftService = {
           draft_order: teamIds,
           status: 'pending',
           current_round: 1,
-          current_pick: 1
+          current_pick: 1,
+          tournament_id: tournamentId
         })
       if (error) throw error
     }
