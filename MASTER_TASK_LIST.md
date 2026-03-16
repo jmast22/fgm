@@ -220,6 +220,5 @@
 - [x] Add a tournament filter dropdown on the "Draft" tab to view past tournament draft boards.
 - [x] Modify Waivers logic: If `draft_cycle` is 'tournament', waiver rule automatically behaves as "free agency" (unrestricted add/drops) until the tournament locks.
 - [x] Update "Roster" tab to display player scores mirroring the individual golfers panel in the Leaderboard, refreshing after each scrape.
-- [ ] Ensure the "Roster" tab tournament filter accurately displays historical (locked) rosters for previous tournaments.
-- [ ] Verify that cumulative scoring correctly groups points by team across multiple tournaments regardless of roster turnover.
-
+- [x] Ensure the "Roster" tab tournament filter accurately displays historical (locked) rosters for previous tournaments.
+- [x] Verify that cumulative scoring correctly groups points by team across multiple tournaments regardless of roster turnover.

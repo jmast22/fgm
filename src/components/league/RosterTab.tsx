@@ -89,13 +89,27 @@ export default function RosterTab({ league, teams }: RosterTabProps) {
         setGolferScores(scoreMap)
 
         // Merge roster with lineup info
-        const mergedLineup = r.map(golfer => {
-          const lineupItem = l?.find(li => li.id === golfer.id)
-          return {
-            ...golfer,
-            is_starter: lineupItem ? lineupItem.is_starter : false
-          }
-        })
+        const selectedTournament = tournaments.find(t => t.id === selectedTournamentId)
+        const isHistorical = selectedTournament?.status === 'completed' || (selectedTournament?.status === 'active' && league.draft_cycle === 'tournament')
+
+        let mergedLineup: LineupGolfer[] = []
+        
+        if (isHistorical && l && l.length > 0) {
+          // For historical views, the lineup record is the source of truth for who was on the team
+          mergedLineup = l.map(lg => ({
+            ...lg,
+            acquired_via: lg.acquired_via || 'draft'
+          }))
+        } else {
+          // For current/active views or if no lineup was saved, use current roster and overlay lineup info
+          mergedLineup = r.map(golfer => {
+            const lineupItem = l?.find(li => li.id === golfer.id)
+            return {
+              ...golfer,
+              is_starter: lineupItem ? lineupItem.is_starter : false
+            }
+          })
+        }
         setLineup(mergedLineup)
         // Mark initial load as complete AFTER setting the lineup
         setTimeout(() => {

@@ -119,6 +119,15 @@ export const draftService = {
     } else {
       // Create new draft
       const tournamentId = await this.getUpcomingTournamentId()
+
+      // If per-tournament redraft, clear current rosters to start fresh
+      if (league.draft_cycle === 'tournament') {
+        const { data: teams } = await supabase.from('teams').select('id').eq('league_id', leagueId)
+        if (teams && teams.length > 0) {
+          await supabase.from('team_rosters').delete().in('team_id', teams.map(t => t.id))
+        }
+      }
+
       const shuffledIds = [...finalTeamIds].sort(() => Math.random() - 0.5)
 
       const { data: draft, error: draftError } = await supabase
