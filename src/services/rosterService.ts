@@ -13,15 +13,27 @@ export interface LineupGolfer extends RosterGolfer {
 }
 
 export const rosterService = {
-  async getTeamRoster(teamId: string) {
-    const { data, error } = await supabase
+  /**
+   * Get team roster, optionally scoped to a specific tournament.
+   * For per-tournament leagues, pass tournamentId to see that tournament's roster.
+   * For season-long leagues, omit tournamentId to see the full roster.
+   */
+  async getTeamRoster(teamId: string, tournamentId?: string) {
+    let query = supabase
       .from('team_rosters')
       .select(`
         acquired_via,
         is_on_trade_block,
+        tournament_id,
         golfer:golfers (*)
       `)
       .eq('team_id', teamId)
+
+    if (tournamentId) {
+      query = query.eq('tournament_id', tournamentId)
+    }
+
+    const { data, error } = await query
 
     if (error) throw error
     
@@ -108,7 +120,7 @@ export const rosterService = {
     if (insertError) throw insertError
   },
 
-  async getAvailableGolfers(leagueId: string) {
+  async getAvailableGolfers(leagueId: string, tournamentId?: string) {
     // 1. Get all drafted golfer IDs in this league
     const { data: teams } = await supabase
       .from('teams')
@@ -117,10 +129,17 @@ export const rosterService = {
     
     const teamIds = teams?.map(t => t.id) || []
     
-    const { data: rosters } = await supabase
+    let rosterQuery = supabase
       .from('team_rosters')
       .select('golfer_id')
       .in('team_id', teamIds)
+    
+    // For per-tournament leagues, only exclude golfers rostered for THIS tournament
+    if (tournamentId) {
+      rosterQuery = rosterQuery.eq('tournament_id', tournamentId)
+    }
+
+    const { data: rosters } = await rosterQuery
     
     const draftedIds = rosters?.map(r => r.golfer_id) || []
 
@@ -145,14 +164,14 @@ export const rosterService = {
       .limit(1)
       .maybeSingle()
 
-    const tournamentId = latestTourney?.tournament_id
+    const rankingTournamentId = latestTourney?.tournament_id
 
     const golferRanks: Record<string, number> = {}
-    if (tournamentId) {
+    if (rankingTournamentId) {
       const { data: rankingData } = await supabase
         .from('tournament_golfers')
         .select('golfer_id, owg_rank')
-        .eq('tournament_id', tournamentId)
+        .eq('tournament_id', rankingTournamentId)
 
       rankingData?.forEach(r => {
         golferRanks[r.golfer_id] = r.owg_rank
@@ -236,14 +255,19 @@ export const rosterService = {
     return results.sort((a, b) => b.points - a.points)
   },
 
-  async addGolfer(teamId: string, golferId: string, method: 'draft' | 'trade' | 'waiver' = 'waiver') {
+  async addGolfer(teamId: string, golferId: string, method: 'draft' | 'trade' | 'waiver' = 'waiver', tournamentId?: string) {
+    const insertData: any = {
+      team_id: teamId,
+      golfer_id: golferId,
+      acquired_via: method
+    }
+    if (tournamentId) {
+      insertData.tournament_id = tournamentId
+    }
+
     const { data, error } = await supabase
       .from('team_rosters')
-      .insert({
-        team_id: teamId,
-        golfer_id: golferId,
-        acquired_via: method
-      })
+      .insert(insertData)
       .select()
       .single()
 

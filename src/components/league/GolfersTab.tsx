@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { rosterService, type RosterGolfer } from '../../services/rosterService'
 import { scoringService, formatScore, scoreColor } from '../../services/scoringService'
 import { supabase } from '../../lib/supabase'
@@ -29,11 +29,19 @@ export default function GolfersTab({ league, teams }: GolfersTabProps) {
   const [searchTerm, setSearchTerm] = useState('')
   const [showRosteredOnly, setShowRosteredOnly] = useState(false)
   const [sortBy, setSortBy] = useState<'rank' | 'score' | 'name'>('rank')
+  const [sortDesc, setSortDesc] = useState(false)
   const [myRoster, setMyRoster] = useState<RosterGolfer[]>([])
+  const [tournamentFields, setTournamentFields] = useState<Record<string, Set<string>>>({})
+  const [availableTournaments, setAvailableTournaments] = useState<{id: string, name: string}[]>([])
+  const [selectedTournamentId, setSelectedTournamentId] = useState<string>('all')
   const [showDropModal, setShowDropModal] = useState<string | null>(null)
   const [isDropping, setIsDropping] = useState(false)
 
   const [isLocked, setIsLocked] = useState(false)
+  const [lockedReason, setLockedReason] = useState<string | null>(null)
+  const [isAwaitingDraft, setIsAwaitingDraft] = useState(false)
+  const [activeUpcomingId, setActiveUpcomingId] = useState<string | null>(null)
+  const isInitialLoad = useRef(true)
 
   const myTeam = teams.find(t => t.user_id === user?.id)
   const isCommish = league.commissioner_id === user?.id
@@ -51,7 +59,57 @@ export default function GolfersTab({ league, teams }: GolfersTabProps) {
       const tData = await tournamentService.getTournaments()
 
       const activeOrUpcoming = tData.find(t => t.status === 'active' || t.status === 'upcoming')
-      setIsLocked(activeOrUpcoming?.status === 'active')
+      setActiveUpcomingId(activeOrUpcoming?.id || null)
+
+      let effectiveTournamentId = selectedTournamentId
+      if (league.draft_cycle === 'tournament' && selectedTournamentId === 'all' && activeOrUpcoming) {
+        effectiveTournamentId = activeOrUpcoming.id
+      }
+      
+      let locked = false
+      let reason = null
+
+      if (league.draft_cycle === 'tournament') {
+        const isCompleted = tData.find(t => t.id === effectiveTournamentId)?.status === 'completed'
+        if (isCompleted) {
+          locked = true
+          reason = "Transactions are locked for concluded tournaments."
+        }
+      } else {
+        if (activeOrUpcoming?.status === 'active') {
+          locked = true
+          reason = "Transactions are locked while a tournament is active."
+        }
+      }
+
+      setIsLocked(locked)
+      setLockedReason(reason)
+
+      // 1.5 Get all tournament golfers to build field filters
+      const { data: allFields } = await supabase
+        .from('tournament_golfers')
+        .select('tournament_id, golfer_id')
+      
+      const fieldMap: Record<string, Set<string>> = {} 
+      allFields?.forEach(f => {
+        if (!fieldMap[f.tournament_id]) fieldMap[f.tournament_id] = new Set()
+        fieldMap[f.tournament_id].add(f.golfer_id)
+      })
+      setTournamentFields(fieldMap)
+      
+      const scrapedIds = Object.keys(fieldMap)
+      const available = tData.filter(t => scrapedIds.includes(t.id))
+      setAvailableTournaments(available)
+
+      // Only auto-select on initial load, not on every loadData re-run
+      if (isInitialLoad.current) {
+        if (selectedTournamentId === 'all' && activeOrUpcoming && scrapedIds.includes(activeOrUpcoming.id)) {
+          setSelectedTournamentId(activeOrUpcoming.id)
+        } else if (selectedTournamentId === 'all' && available.length > 0) {
+          setSelectedTournamentId(available[0].id)
+        }
+        isInitialLoad.current = false
+      }
 
       // 2. Get OWGR rankings from latest tournament
       const { data: latestTourney } = await supabase
@@ -73,12 +131,19 @@ export default function GolfersTab({ league, teams }: GolfersTabProps) {
         })
       }
 
-      // 3. Get all team rosters to determine which golfers are rostered
+      // 3. Get team rosters — tournament-scoped for per-tournament leagues
       const teamIds = teams.map(t => t.id)
-      const { data: rosters } = await supabase
+      let rosterQuery = supabase
         .from('team_rosters')
         .select('team_id, golfer_id')
         .in('team_id', teamIds)
+
+      // For per-tournament leagues, only show rosters for the effective tournament
+      if (league.draft_cycle === 'tournament' && effectiveTournamentId !== 'all') {
+        rosterQuery = rosterQuery.eq('tournament_id', effectiveTournamentId)
+      }
+
+      const { data: rosters } = await rosterQuery
 
       const rosterMap: Record<string, string> = {} // golfer_id -> team_id
       rosters?.forEach(r => {
@@ -161,10 +226,25 @@ export default function GolfersTab({ league, teams }: GolfersTabProps) {
 
       setAllGolfers(result)
 
-      // 6. Get my roster for add/drop
+      // 6. Get my roster for add/drop — tournament-scoped for per-tournament leagues
       if (myTeam) {
-        const roster = await rosterService.getTeamRoster(myTeam.id)
+        const tournamentForRoster = league.draft_cycle === 'tournament' && effectiveTournamentId !== 'all' 
+          ? effectiveTournamentId : undefined
+        const roster = await rosterService.getTeamRoster(myTeam.id, tournamentForRoster)
         setMyRoster(roster)
+      }
+
+      // 7. Check Draft Status
+      if (league.draft_cycle === 'tournament' && effectiveTournamentId !== 'all') {
+        const { data: draft } = await supabase
+          .from('drafts')
+          .select('status')
+          .eq('league_id', league.id)
+          .eq('tournament_id', effectiveTournamentId)
+          .maybeSingle()
+        setIsAwaitingDraft(!draft || draft.status !== 'completed')
+      } else {
+        setIsAwaitingDraft(false)
       }
     } catch (err) {
       console.error('Error loading data:', err)
@@ -175,7 +255,21 @@ export default function GolfersTab({ league, teams }: GolfersTabProps) {
 
   useEffect(() => {
     loadData()
-  }, [league.id, myTeam?.id])
+
+    // Subscribe to tournament field changes for automatic refresh on scrape
+    const fieldSubscription = supabase
+      .channel('tournament_golfers_changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'tournament_golfers' }, () => {
+        loadData()
+      })
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(fieldSubscription)
+    }
+  }, [league.id, myTeam?.id, selectedTournamentId])
+
+  // (Removed redundant draft check effect, it's now handled in loadData)
 
   const handleAdd = async (golferId: string) => {
     if (!myTeam) return
@@ -190,7 +284,10 @@ export default function GolfersTab({ league, teams }: GolfersTabProps) {
     }
 
     try {
-      await rosterService.addGolfer(myTeam.id, golferId)
+      const tournamentForAdd = league.draft_cycle === 'tournament' 
+        ? (selectedTournamentId !== 'all' ? selectedTournamentId : activeUpcomingId) || undefined 
+        : undefined
+      await rosterService.addGolfer(myTeam.id, golferId, 'waiver', tournamentForAdd)
       alert('Golfer added to your roster!')
       loadData()
     } catch (err: any) {
@@ -207,7 +304,10 @@ export default function GolfersTab({ league, teams }: GolfersTabProps) {
     setIsDropping(true)
     try {
       await rosterService.dropGolfer(myTeam.id, dropGolferId)
-      await rosterService.addGolfer(myTeam.id, showDropModal)
+      const tournamentForAdd = league.draft_cycle === 'tournament' 
+        ? (selectedTournamentId !== 'all' ? selectedTournamentId : activeUpcomingId) || undefined 
+        : undefined
+      await rosterService.addGolfer(myTeam.id, showDropModal, 'waiver', tournamentForAdd)
       alert('Transaction complete!')
       setShowDropModal(null)
       loadData()
@@ -227,11 +327,28 @@ export default function GolfersTab({ league, teams }: GolfersTabProps) {
     displayGolfers = displayGolfers.filter(g => g.is_rostered)
   }
 
+  if (selectedTournamentId !== 'all') {
+    displayGolfers = displayGolfers.filter(g => tournamentFields[selectedTournamentId]?.has(g.id))
+  }
+
   displayGolfers.sort((a, b) => {
-    if (sortBy === 'rank') return (a.owg_rank || 9999) - (b.owg_rank || 9999)
-    if (sortBy === 'score') return a.total_score - b.total_score // lower is better
-    return a.name.localeCompare(b.name)
+    let result = 0;
+    if (sortBy === 'rank') result = (a.owg_rank || 9999) - (b.owg_rank || 9999)
+    else if (sortBy === 'score') result = a.total_score - b.total_score // lower is better
+    else result = a.name.localeCompare(b.name)
+
+    return sortDesc ? -result : result
   })
+
+  // Handle Sort
+  const handleSort = (key: 'rank' | 'score' | 'name') => {
+    if (sortBy === key) {
+      setSortDesc(!sortDesc)
+    } else {
+      setSortBy(key)
+      setSortDesc(false)
+    }
+  }
 
   if (loading) return <div className="p-8 text-center text-surface-400">Loading golfers...</div>
 
@@ -249,13 +366,25 @@ export default function GolfersTab({ league, teams }: GolfersTabProps) {
                 {allGolfers.length} Total
               </span>
             </p>
-            {isLocked && (
+            {isLocked && lockedReason && (
               <p className="text-amber-500 text-xs mt-2 font-bold flex items-center gap-1">
-                🔒 Transactions are locked while the tournament is active.
+                🔒 {lockedReason}
               </p>
             )}
           </div>
           <div className="flex flex-wrap items-center gap-3">
+            {/* Tournament Filter */}
+            <select
+              value={selectedTournamentId}
+              onChange={(e) => setSelectedTournamentId(e.target.value)}
+              className="bg-surface-900 border border-surface-700 rounded-xl px-3 py-2 text-xs text-surface-100 font-bold outline-none cursor-pointer max-w-[200px] truncate"
+            >
+              <option value="all">All Golfers (No Filter)</option>
+              {availableTournaments.map(t => (
+                <option key={t.id} value={t.id}>{t.name} (Field)</option>
+              ))}
+            </select>
+
             {/* On Roster Toggle */}
             <button
               onClick={() => setShowRosteredOnly(!showRosteredOnly)}
@@ -268,17 +397,6 @@ export default function GolfersTab({ league, teams }: GolfersTabProps) {
               <span>{showRosteredOnly ? '✓' : '○'}</span>
               On Roster
             </button>
-
-            {/* Sort */}
-            <select
-              value={sortBy}
-              onChange={(e) => setSortBy(e.target.value as any)}
-              className="bg-surface-900 border border-surface-700 rounded-xl px-3 py-2 text-xs text-surface-100 font-bold outline-none cursor-pointer"
-            >
-              <option value="rank">Sort: OWGR</option>
-              <option value="score">Sort: Score</option>
-              <option value="name">Sort: Name</option>
-            </select>
 
             {/* Search */}
             <div className="relative">
@@ -294,17 +412,22 @@ export default function GolfersTab({ league, teams }: GolfersTabProps) {
           </div>
         </div>
 
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto overflow-y-auto max-h-[800px] rounded-lg border border-surface-700/50">
           <table className="w-full border-collapse">
-            <thead>
+            <thead className="sticky top-0 bg-surface-800 z-10 shadow-md">
               <tr className="text-left border-b border-surface-700/50">
-                <th className="pb-4 font-black text-xs text-surface-500 uppercase tracking-widest px-4">Golfer</th>
-                <th className="pb-4 font-black text-xs text-surface-500 uppercase tracking-widest px-4 text-center">Age</th>
-                <th className="pb-4 font-black text-xs text-surface-500 uppercase tracking-widest px-4 text-center">OWGR</th>
-                <th className="pb-4 font-black text-xs text-surface-500 uppercase tracking-widest px-4 text-center">Tourn.</th>
-                <th className="pb-4 font-black text-xs text-surface-500 uppercase tracking-widest px-4 text-right">Season Score</th>
-                <th className="pb-4 font-black text-xs text-surface-500 uppercase tracking-widest px-4 text-center">Status</th>
-                <th className="pb-4 font-black text-xs text-surface-500 uppercase tracking-widest px-4 text-right">Action</th>
+                <th className="py-4 font-black text-xs text-surface-500 uppercase tracking-widest px-4 cursor-pointer hover:text-surface-300 transition-colors" onClick={() => handleSort('name')}>
+                  Golfer {sortBy === 'name' && <span className="text-primary-400">{sortDesc ? '↑' : '↓'}</span>}
+                </th>
+                <th className="py-4 font-black text-xs text-surface-500 uppercase tracking-widest px-4 text-center cursor-pointer hover:text-surface-300 transition-colors" onClick={() => handleSort('rank')}>
+                  OWGR {sortBy === 'rank' && <span className="text-primary-400">{sortDesc ? '↑' : '↓'}</span>}
+                </th>
+                <th className="py-4 font-black text-xs text-surface-500 uppercase tracking-widest px-4 text-center">Tourn.</th>
+                <th className="py-4 font-black text-xs text-surface-500 uppercase tracking-widest px-4 text-right cursor-pointer hover:text-surface-300 transition-colors" onClick={() => handleSort('score')}>
+                   Season Score {sortBy === 'score' && <span className="text-primary-400">{sortDesc ? '↑' : '↓'}</span>}
+                </th>
+                <th className="py-4 font-black text-xs text-surface-500 uppercase tracking-widest px-4 text-center">Status</th>
+                <th className="py-4 font-black text-xs text-surface-500 uppercase tracking-widest px-4 text-right">Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-surface-700/50">
@@ -314,9 +437,6 @@ export default function GolfersTab({ league, teams }: GolfersTabProps) {
                     <div className="font-bold text-surface-100 group-hover:text-primary-400 transition-colors">
                       {golfer.name}
                     </div>
-                  </td>
-                  <td className="py-4 px-4 text-center text-surface-400 text-sm">
-                    {golfer.age}
                   </td>
                   <td className="py-4 px-4 text-center">
                     <span className={`text-xs font-bold ${golfer.owg_rank && golfer.owg_rank !== 9999 ? 'text-primary-400' : 'text-surface-600'}`}>
@@ -336,6 +456,10 @@ export default function GolfersTab({ league, teams }: GolfersTabProps) {
                       <span className="text-[9px] bg-amber-500/10 text-amber-400 border border-amber-500/20 px-2 py-1 rounded-lg font-black uppercase tracking-widest whitespace-nowrap">
                         {golfer.rostered_team || 'Rostered'}
                       </span>
+                    ) : (isAwaitingDraft || isLocked) ? (
+                      <span className="text-[9px] bg-surface-700/50 text-surface-400 border border-surface-700/50 px-2 py-1 rounded-lg font-black uppercase tracking-widest whitespace-nowrap">
+                        {isAwaitingDraft ? 'Awaiting Draft' : 'Locked'}
+                      </span>
                     ) : (
                       <span className="text-[9px] bg-green-500/10 text-green-400 border border-green-500/20 px-2 py-1 rounded-lg font-black uppercase tracking-widest">
                         Available
@@ -345,18 +469,22 @@ export default function GolfersTab({ league, teams }: GolfersTabProps) {
                   <td className="py-4 px-4 text-right">
                     {myTeam && !golfer.is_rostered && (
                       <button 
-                        className={`px-4 py-1.5 rounded-lg text-xs font-black shadow-glow/10 transition-all uppercase tracking-wider ${isLocked && !isCommish ? 'bg-surface-700 text-surface-400 cursor-not-allowed' : 'bg-primary-600 text-surface-900 hover:bg-primary-500 active:scale-95'}`}
-                        onClick={() => handleAdd(golfer.id)}
-                        disabled={isLocked && !isCommish}
+                        className={`px-4 py-1.5 rounded-lg text-xs font-black shadow-glow/10 transition-all uppercase tracking-wider ${
+                          isLocked || isAwaitingDraft
+                            ? 'bg-surface-700 text-surface-500 cursor-not-allowed border border-surface-600/50' 
+                            : 'bg-primary-600 text-surface-900 hover:bg-primary-500 active:scale-95'
+                        }`}
+                        onClick={() => !(isLocked || isAwaitingDraft) && handleAdd(golfer.id)}
+                        disabled={isLocked || isAwaitingDraft}
                       >
-                        {league.waiver_rule === 'Free Agency' || league.draft_cycle === 'tournament' ? 'Add' : 'Claim'}
+                        {(isLocked || isAwaitingDraft) ? 'Locked' : (league.waiver_rule === 'Free Agency' || league.draft_cycle === 'tournament' ? 'Add' : 'Claim')}
                       </button>
                     )}
                   </td>
                 </tr>
               )) : (
                 <tr>
-                  <td colSpan={7} className="py-12 text-center text-surface-500 italic">
+                  <td colSpan={6} className="py-12 text-center text-surface-500 italic">
                     No golfers found matching your search.
                   </td>
                 </tr>

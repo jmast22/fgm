@@ -1,8 +1,8 @@
 @import "tailwindcss";
 
-/* ===== Custom Theme ===== */
-@theme {
-  /* Golf-inspired color palette */
+/* ===== Custom Theme Variables ===== */
+:root {
+  /* Default: Dark Mode */
   --color-primary-50: #ecfdf5;
   --color-primary-100: #d1fae5;
   --color-primary-200: #a7f3d0;
@@ -15,19 +15,6 @@
   --color-primary-900: #064e3b;
   --color-primary-950: #022c22;
 
-  /* Accent — warm gold for highlights, scores, badges */
-  --color-accent-50: #fffbeb;
-  --color-accent-100: #fef3c7;
-  --color-accent-200: #fde68a;
-  --color-accent-300: #fcd34d;
-  --color-accent-400: #fbbf24;
-  --color-accent-500: #f59e0b;
-  --color-accent-600: #d97706;
-  --color-accent-700: #b45309;
-  --color-accent-800: #92400e;
-  --color-accent-900: #78350f;
-
-  /* Surface colors for dark mode */
   --color-surface-50: #f8fafc;
   --color-surface-100: #f1f5f9;
   --color-surface-200: #e2e8f0;
@@ -40,41 +27,61 @@
   --color-surface-900: #0f172a;
   --color-surface-950: #020617;
 
-  /* Status */
+  --color-accent-gold: #fbbf24;
+}
+
+:root.light {
+  /* Light Mode - "Fairway" Aesthetic */
+  --color-surface-50: #0f172a;
+  --color-surface-100: #1e293b;
+  --color-surface-200: #334155;
+  --color-surface-300: #475569;
+  --color-surface-400: #64748b;
+  --color-surface-500: #94a3b8;
+  --color-surface-600: #cbd5e1;
+  --color-surface-700: #e2e8f0;
+  --color-surface-800: #f1f5f9;
+  --color-surface-900: #f8fafc;
+  --color-surface-950: #ffffff;
+
+  --color-primary-500: #059669; /* Slightly darker green for legibility on white */
+}
+
+@theme {
+  --color-primary-50: var(--color-primary-50);
+  --color-primary-100: var(--color-primary-100);
+  --color-primary-200: var(--color-primary-200);
+  --color-primary-300: var(--color-primary-300);
+  --color-primary-400: var(--color-primary-400);
+  --color-primary-500: var(--color-primary-500);
+  --color-primary-600: var(--color-primary-600);
+  --color-primary-700: var(--color-primary-700);
+  --color-primary-800: var(--color-primary-800);
+  --color-primary-900: var(--color-primary-900);
+  --color-primary-950: var(--color-primary-950);
+
+  --color-surface-50: var(--color-surface-50);
+  --color-surface-100: var(--color-surface-100);
+  --color-surface-200: var(--color-surface-200);
+  --color-surface-300: var(--color-surface-300);
+  --color-surface-400: var(--color-surface-400);
+  --color-surface-500: var(--color-surface-500);
+  --color-surface-600: var(--color-surface-600);
+  --color-surface-700: var(--color-surface-700);
+  --color-surface-800: var(--color-surface-800);
+  --color-surface-900: var(--color-surface-900);
+  --color-surface-950: var(--color-surface-950);
+
+  /* Faulty logic from before: birdied, etc. fixed here */
   --color-birdie: #22c55e;
   --color-eagle: #eab308;
   --color-bogey: #ef4444;
 
-  /* Fonts */
-  --font-sans: 'Inter', 'system-ui', '-apple-system', 'Segoe UI', 'Roboto', sans-serif;
+  --font-sans: 'Inter', 'system-ui', sans-serif;
   --font-display: 'Outfit', 'Inter', sans-serif;
-  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+  --font-mono: 'JetBrains Mono', monospace;
 
-  /* Shadows */
-  --shadow-card: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
-  --shadow-card-hover: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
-  --shadow-glow: 0 0 20px rgb(16 185 129 / 0.3);
-
-  /* Animations */
-  --animate-fade-in: fade-in 0.3s ease-out;
-  --animate-slide-up: slide-up 0.3s ease-out;
-  --animate-scale-in: scale-in 0.2s ease-out;
-}
-
-/* ===== Keyframes ===== */
-@keyframes fade-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-@keyframes slide-up {
-  from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-@keyframes scale-in {
-  from { opacity: 0; transform: scale(0.95); }
-  to { opacity: 1; transform: scale(1); }
+  --shadow-glow: 0 0 20px rgb(16 185 129 / 0.2);
 }
 
 /* ===== Base Styles ===== */
@@ -82,27 +89,36 @@
   html {
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
+    transition: background-color 0.3s ease, color 0.3s ease;
   }
 
   body {
-    @apply bg-surface-900 text-surface-100 min-h-screen;
+    @apply bg-surface-950 text-surface-100 min-h-screen selection:bg-primary-500/30;
   }
 
-  /* Scrollbar styling */
+  /* Global Scrollbar styling */
   ::-webkit-scrollbar {
-    width: 6px;
+    width: 5px;
+    height: 5px;
   }
 
   ::-webkit-scrollbar-track {
-    @apply bg-surface-800;
+    @apply bg-transparent;
   }
 
   ::-webkit-scrollbar-thumb {
-    @apply bg-surface-600 rounded-full;
+    @apply bg-surface-700/50 rounded-full hover:bg-primary-500/40 transition-colors duration-300;
   }
 
-  ::-webkit-scrollbar-thumb:hover {
-    @apply bg-surface-500;
+  /* Link & Button Focus */
+  :focus-visible {
+    @apply outline-none ring-2 ring-primary-500 ring-offset-2 ring-offset-surface-950 transition-all;
+  }
+}
+
+/* ===== Custom Utilities ===== */
+@layer utilities {
+  .glass {
+    @apply bg-surface-800/40 border border-surface-700/50 backdrop-blur-xl shadow-2xl transition-all;
   }
 }

@@ -60,43 +60,50 @@ export const tradeService = {
   },
 
   async executeTrade(trade: Trade) {
-    // 1. Remove offered golfers from offering team
-    const { error: drop1 } = await supabase
-      .from('team_rosters')
-      .delete()
-      .eq('team_id', trade.offering_team_id)
-      .in('golfer_id', trade.offered_golfers)
+    // Determine tournament_id to apply the trade to
+    const { data: league } = await supabase.from('leagues').select('draft_cycle').eq('id', trade.league_id).single()
+    let activeTournamentId: string | undefined = undefined
 
-    if (drop1) throw drop1
+    if (league?.draft_cycle === 'tournament') {
+      const { data: tourneys } = await supabase.from('tournaments')
+        .select('id')
+        .in('status', ['active', 'upcoming'])
+        .order('start_date', { ascending: true })
+        .limit(1)
+      if (tourneys && tourneys.length > 0) activeTournamentId = tourneys[0].id
+    }
+
+    // 1. Remove offered golfers from offering team
+    let drop1 = supabase.from('team_rosters').delete().eq('team_id', trade.offering_team_id).in('golfer_id', trade.offered_golfers)
+    if (activeTournamentId) drop1 = drop1.eq('tournament_id', activeTournamentId)
+    const { error: err1 } = await drop1
+    if (err1) throw err1
 
     // 2. Remove requested golfers from receiving team
-    const { error: drop2 } = await supabase
-      .from('team_rosters')
-      .delete()
-      .eq('team_id', trade.receiving_team_id)
-      .in('golfer_id', trade.requested_golfers)
-
-    if (drop2) throw drop2
+    let drop2 = supabase.from('team_rosters').delete().eq('team_id', trade.receiving_team_id).in('golfer_id', trade.requested_golfers)
+    if (activeTournamentId) drop2 = drop2.eq('tournament_id', activeTournamentId)
+    const { error: err2 } = await drop2
+    if (err2) throw err2
 
     // 3. Add offered golfers to receiving team
-    const add1 = trade.offered_golfers.map(gid => ({
-      team_id: trade.receiving_team_id,
-      golfer_id: gid,
-      acquired_via: 'trade'
-    }))
+    const add1 = trade.offered_golfers.map(gid => {
+      const entry: any = { team_id: trade.receiving_team_id, golfer_id: gid, acquired_via: 'trade' }
+      if (activeTournamentId) entry.tournament_id = activeTournamentId
+      return entry
+    })
     const { error: insert1 } = await supabase.from('team_rosters').insert(add1)
     if (insert1) throw insert1
 
     // 4. Add requested golfers to offering team
-    const add2 = trade.requested_golfers.map(gid => ({
-      team_id: trade.offering_team_id,
-      golfer_id: gid,
-      acquired_via: 'trade'
-    }))
+    const add2 = trade.requested_golfers.map(gid => {
+      const entry: any = { team_id: trade.offering_team_id, golfer_id: gid, acquired_via: 'trade' }
+      if (activeTournamentId) entry.tournament_id = activeTournamentId
+      return entry
+    })
     const { error: insert2 } = await supabase.from('team_rosters').insert(add2)
     if (insert2) throw insert2
 
     // 5. Mark trade as completed
-    await supabase.from('trades').update({ status: 'completed' }).eq('id', trade.id)
+    await supabase.from('trades').update({ status: 'completed', updated_at: new Date().toISOString() }).eq('id', trade.id)
   }
 }

@@ -28,6 +28,19 @@ export interface ScrapeResult {
   durationMs: number
 }
 
+export interface FieldScrapeResult {
+  success: boolean
+  tournamentName: string
+  tournamentId: string
+  golfersMatched: number
+  golfersUnmatched: number
+  fieldUpserted: number
+  unmatchedNames: string[]
+  errors: string[]
+  timestamp: string
+  durationMs: number
+}
+
 interface ESPNCompetitor {
   id: string
   athlete: {
@@ -166,6 +179,19 @@ export const scraperService = {
   },
 
   /**
+   * Fetch ESPN scoreboard for a specific event ID using the leaderboard endpoint.
+   */
+  async fetchSpecificESPNEvent(eventId: string): Promise<ESPNEvent | null> {
+    const url = `https://site.api.espn.com/apis/site/v2/sports/golf/leaderboard?event=${eventId}`
+    const response = await fetch(url)
+    if (!response.ok) {
+      throw new Error(`ESPN API returned ${response.status}: ${response.statusText}`)
+    }
+    const data = await response.json()
+    return data.events?.[0] || null
+  },
+
+  /**
    * Get the list of available ESPN events from the calendar.
    */
   async getESPNCalendar(): Promise<{ id: string; label: string; startDate: string; endDate: string }[]> {
@@ -250,6 +276,29 @@ export const scraperService = {
       if (wordMatch) return wordMatch
     }
 
+    return null
+  },
+
+  /**
+   * Match our DB tournament name to an ESPN Event ID from the calendar.
+   */
+  async getESPNTournamentId(tournamentName: string): Promise<string | null> {
+    const calendar = await this.getESPNCalendar()
+    
+    const cleanDbName = tournamentName
+      .replace(/^THE\s+/i, '')
+      .replace(/\s+pres\.\s+by\s+.*/i, '')
+      .replace(/\s+presented\s+by\s+.*/i, '')
+      .trim().toLowerCase()
+    
+    for (const c of calendar) {
+      if (c.label.toLowerCase().includes(cleanDbName)) return c.id
+      
+      const keyWords = cleanDbName.split(/\s+/).filter(w => w.length > 3)
+      for (const word of keyWords) {
+        if (c.label.toLowerCase().includes(word)) return c.id
+      }
+    }
     return null
   },
 
@@ -548,5 +597,158 @@ export const scraperService = {
       }),
       availableRounds: [...rounds].sort()
     }
+  },
+
+  /**
+   * Fetch the closest upcoming tournament from the database directly.
+   * Assumes local date if no date string is provided.
+   */
+  async getUpcomingTournament(fromDateStr?: string): Promise<{ id: string; name: string; start_date: string } | null> {
+    const fromDate = fromDateStr || new Date().toISOString()
+    const { data } = await supabase
+      .from('tournaments')
+      .select('id, name, start_date')
+      .gte('start_date', fromDate)
+      .order('start_date', { ascending: true })
+      .limit(1)
+      .maybeSingle()
+    
+    return data
+  },
+
+  /**
+   * Fetch ESPN event by exact matching (or using the active one if omitted).
+   * This logic is simple right now, but theoretically if the current active
+   * event in ESPN is not the upcoming tournament we want, we'd need to search
+   * the calendar. For Phase 17, we'll try matching the upcoming tournament name 
+   * against the calendar / active event.
+   */
+  async scrapeTournamentField(tournamentId: string, tournamentName: string): Promise<FieldScrapeResult> {
+    const startTime = Date.now()
+    const errors: string[] = []
+    const unmatchedNames: string[] = []
+    let golfersMatched = 0
+    let golfersUnmatched = 0
+    let fieldUpserted = 0
+
+    try {
+      console.log(`🏌️ Fetching ESPN scoreboard for field scrape... Targeting: ${tournamentName}`)
+      
+      // 1. Find the ESPN Event ID from their calendar
+      const espnEventId = await this.getESPNTournamentId(tournamentName)
+      if (!espnEventId) {
+        throw new Error(`Could not find an event named "${tournamentName}" in the ESPN calendar.`)
+      }
+
+      // 2. Fetch that specific event directly to get the field
+      const espnEvent = await this.fetchSpecificESPNEvent(espnEventId)
+      
+      if (!espnEvent) {
+        throw new Error('No ESPN event payload returned for this ID.')
+      }
+
+      console.log(`✅ Found event: ${espnEvent.name}`)
+
+      const lookup = await this.buildGolferLookup()
+      const competitors = espnEvent.competitions?.[0]?.competitors || []
+      
+      if (competitors.length === 0) {
+        throw new Error('No competitors found in ESPN data. Event might not be populated yet.')
+      }
+
+      console.log(`📊 Processing ${competitors.length} competitors for field...`)
+
+      const records: { tournament_id: string; golfer_id: string }[] = []
+
+      for (const competitor of competitors) {
+        const espnName = competitor.athlete?.fullName || competitor.athlete?.displayName
+        if (!espnName) {
+           errors.push(`Competitor ${competitor.id} has no name`)
+           continue
+        }
+
+        const golferId = this.matchGolfer(espnName, lookup)
+        if (!golferId) {
+          golfersUnmatched++
+          unmatchedNames.push(espnName)
+          continue
+        }
+
+        golfersMatched++
+        records.push({
+          tournament_id: tournamentId,
+          golfer_id: golferId
+        })
+      }
+
+      console.log(`✅ Matched ${golfersMatched} golfers to our DB. ${golfersUnmatched} unmatched.`)
+
+      if (records.length > 0) {
+        const batchSize = 100
+        for (let i = 0; i < records.length; i += batchSize) {
+          const batch = records.slice(i, i + batchSize)
+          const { error: upsertError } = await supabase
+            .from('tournament_golfers')
+            .upsert(batch, { onConflict: 'tournament_id,golfer_id' })
+          
+          if (upsertError) {
+             errors.push(`Upsert batch error at ${i}: ${upsertError.message}`)
+          } else {
+             fieldUpserted += batch.length
+          }
+        }
+      }
+
+      return {
+        success: errors.length === 0,
+        tournamentName,
+        tournamentId,
+        golfersMatched,
+        golfersUnmatched,
+        fieldUpserted,
+        unmatchedNames,
+        errors,
+        timestamp: new Date().toISOString(),
+        durationMs: Date.now() - startTime
+      }
+
+    } catch (err: any) {
+      console.error('❌ Field Scrape failed:', err)
+      return {
+        success: false,
+        tournamentName,
+        tournamentId,
+        golfersMatched,
+        golfersUnmatched,
+        fieldUpserted,
+        unmatchedNames,
+        errors: [err.message || 'Unknown error'],
+        timestamp: new Date().toISOString(),
+        durationMs: Date.now() - startTime
+      }
+    }
+  },
+
+  /**
+   * Add a brand new golfer to the DB
+   */
+  async addMasterGolfer(name: string): Promise<{ success: boolean; id?: string; error?: string }> {
+    const { data, error } = await supabase
+      .from('golfers')
+      .insert({ name, age: null })
+      .select('id')
+      .single()
+    
+    if (error) {
+      console.error('Failed to add master golfer:', error)
+      return { success: false, error: error.message }
+    }
+    
+    // Auto-add an alias for their exact name as a base safety measure
+    if (data?.id) {
+      await this.addGolferAlias(data.id, name)
+    }
+
+    return { success: true, id: data.id }
   }
 }

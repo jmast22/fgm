@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { scraperService } from '../services/scraperService';
-import type { ScrapeResult } from '../services/scraperService';
+import type { ScrapeResult, FieldScrapeResult } from '../services/scraperService';
 
 // Helper function to read file as text
 const readFileContent = (file: File): Promise<string> => {
@@ -24,6 +24,8 @@ const AdminImport = () => {
 
   // Scraper states
   const [scrapeResult, setScrapeResult] = useState<ScrapeResult | null>(null);
+  const [fieldScrapeResult, setFieldScrapeResult] = useState<FieldScrapeResult | null>(null);
+  const [upcomingTournament, setUpcomingTournament] = useState<{id: string, name: string, start_date: string} | null>(null);
   const [unmatchedAliases, setUnmatchedAliases] = useState<Record<string, string>>({}); // espnName -> golferId
   const [allGolfers, setAllGolfers] = useState<{id: string, name: string}[]>([]);
 
@@ -34,6 +36,13 @@ const AdminImport = () => {
       if (data) setAllGolfers(data);
     };
     loadGolfers();
+
+    // Fetch upcoming tournament
+    const loadUpcomingTournament = async () => {
+      const tournament = await scraperService.getUpcomingTournament();
+      setUpcomingTournament(tournament);
+    };
+    loadUpcomingTournament();
   }, []);
 
   const handleGolferImport = async () => {
@@ -116,6 +125,25 @@ const AdminImport = () => {
     }
   };
 
+  const handleFieldScrape = async () => {
+    if (!upcomingTournament) return;
+    setIsLoading(true);
+    setStatus(`🚀 Fetching ESPN field for ${upcomingTournament.name}...`);
+    try {
+      const result = await scraperService.scrapeTournamentField(upcomingTournament.id, upcomingTournament.name);
+      setFieldScrapeResult(result);
+      if (result.success) {
+        setStatus(`✅ Field Scrape complete for ${result.tournamentName}! Added ${result.fieldUpserted} players to field.`);
+      } else {
+        setStatus(`⚠️ Field Scrape finished with errors. Check details below.`);
+      }
+    } catch (err: any) {
+      setStatus(`❌ Scrape error: ${err.message}`);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const handleAddAlias = async (espnName: string, golferId: string) => {
     if (!golferId) return;
     
@@ -123,17 +151,71 @@ const AdminImport = () => {
     try {
       const success = await scraperService.addGolferAlias(golferId, espnName);
       if (success) {
-        setStatus(`✅ Added alias: "${espnName}" -> ${allGolfers.find(g => g.id === golferId)?.name}`);
+        const msg = `✅ Added alias: "${espnName}" -> ${allGolfers.find(g => g.id === golferId)?.name}`;
+        setStatus(msg);
+        alert(msg);
         // Remove from list
         setScrapeResult(prev => prev ? {
           ...prev,
           unmatchedNames: prev.unmatchedNames.filter(n => n !== espnName)
         } : null);
+        setFieldScrapeResult(prev => prev ? {
+          ...prev,
+          unmatchedNames: prev.unmatchedNames.filter(n => n !== espnName)
+        } : null);
       } else {
-        setStatus('❌ Failed to add alias.');
+        setStatus('❌ Failed to add alias. Check RLS policies.');
+        alert('❌ Failed to add alias. Please ensure Row Level Security (RLS) is disabled for golfer_aliases or your policy permits inserts.');
       }
     } catch (err: any) {
       setStatus(`Error: ${err.message}`);
+      alert(`Error: ${err.message}`);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleCreateGolfer = async (name: string, tournamentIdTarget?: string) => {
+    setIsLoading(true);
+    try {
+      const { success, id, error } = await scraperService.addMasterGolfer(name);
+      if (success && id) {
+        const msg = `✅ Created new golfer: "${name}"`;
+        setStatus(msg);
+        
+        // Remove from lists
+        setScrapeResult(prev => prev ? {
+          ...prev,
+          unmatchedNames: prev.unmatchedNames.filter(n => n !== name)
+        } : null);
+        setFieldScrapeResult(prev => prev ? {
+          ...prev,
+          unmatchedNames: prev.unmatchedNames.filter(n => n !== name)
+        } : null);
+        
+        // Refresh master list
+        const { data } = await supabase.from('golfers').select('id, name').order('name');
+        if (data) setAllGolfers(data);
+
+        // Optionally add to tournament field if pulling field
+        if (tournamentIdTarget) {
+           await supabase.from('tournament_golfers').upsert({
+             tournament_id: tournamentIdTarget,
+             golfer_id: id
+           }, { onConflict: 'tournament_id,golfer_id' });
+           const fieldMsg = `✅ Created golfer "${name}" and automatically added to the field!`;
+           setStatus(fieldMsg);
+           alert(fieldMsg);
+        } else {
+           alert(msg);
+        }
+      } else {
+        setStatus(`❌ Failed to create golfer: ${error}`);
+        alert(`❌ Failed to create golfer: ${error}\n\nThis is usually caused by Row Level Security (RLS). Please check your Supabase dashboard and either disable RLS for the 'golfers' table or add an INSERT policy.`);
+      }
+    } catch (err: any) {
+      setStatus(`Error: ${err.message}`);
+      alert(`Error: ${err.message}`);
     } finally {
       setIsLoading(false);
     }
@@ -148,6 +230,114 @@ const AdminImport = () => {
           <p className="text-blue-700 dark:text-blue-200">{status}</p>
         </div>
       )}
+
+      {/* Field Scraper Section */}
+      <section className="bg-white dark:bg-gray-800 p-6 rounded-xl shadow-md border-2 border-blue-500 shadow-blue-100 dark:shadow-blue-900/20">
+        <h2 className="text-xl font-bold mb-2 text-gray-800 dark:text-gray-100 flex items-center gap-2">
+          <span>📅</span> Automated Tournament Field Scraper (Phase 17)
+        </h2>
+        <p className="text-sm text-gray-500 dark:text-gray-400 mb-6">
+          Automatically pull the player field for the upcoming tournament from ESPN and store it in the database.
+        </p>
+
+        {upcomingTournament ? (
+          <div className="mb-4 p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800 rounded-lg">
+            <p className="text-sm font-medium text-blue-800 dark:text-blue-300">
+              Closest Upcoming Tournament: <strong>{upcomingTournament.name}</strong> 
+              <span className="ml-2 text-xs opacity-75">(Starts: {new Date(upcomingTournament.start_date).toLocaleDateString()})</span>
+            </p>
+          </div>
+        ) : (
+          <div className="mb-4 p-4 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-100 dark:border-yellow-800 rounded-lg">
+            <p className="text-sm font-medium text-yellow-800 dark:text-yellow-300">
+              No upcoming tournaments found in the schedule.
+            </p>
+          </div>
+        )}
+
+        <div className="flex flex-wrap gap-4">
+          <button 
+            onClick={handleFieldScrape}
+            disabled={isLoading || !upcomingTournament}
+            className="flex-1 px-6 py-3 bg-blue-600 dark:bg-blue-500 text-white font-bold rounded-lg hover:bg-blue-700 dark:hover:bg-blue-600 disabled:opacity-50 transition-all shadow-lg hover:shadow-blue-200 dark:hover:shadow-none"
+          >
+            {isLoading ? '🔄 Scraping...' : `🚀 Fetch Field for ${upcomingTournament?.name || 'Tournament'}`}
+          </button>
+        </div>
+
+        {fieldScrapeResult && (
+          <div className="mt-6 space-y-4 border-t pt-4 border-gray-100 dark:border-gray-700">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="p-3 bg-gray-50 dark:bg-gray-700 rounded-lg text-center">
+                <span className="block text-xs text-gray-400 uppercase font-bold">Matched</span>
+                <span className="text-xl font-bold text-green-600">{fieldScrapeResult.golfersMatched}</span>
+              </div>
+              <div className="p-3 bg-gray-50 dark:bg-gray-700 rounded-lg text-center">
+                <span className="block text-xs text-gray-400 uppercase font-bold">Unmatched</span>
+                <span className="text-xl font-bold text-red-500">{fieldScrapeResult.golfersUnmatched}</span>
+              </div>
+              <div className="p-3 bg-gray-50 dark:bg-gray-700 rounded-lg text-center">
+                <span className="block text-xs text-gray-400 uppercase font-bold">Added to Field</span>
+                <span className="text-xl font-bold text-blue-600">{fieldScrapeResult.fieldUpserted}</span>
+              </div>
+              <div className="p-3 bg-gray-50 dark:bg-gray-700 rounded-lg text-center">
+                <span className="block text-xs text-gray-400 uppercase font-bold">Duration</span>
+                <span className="text-xl font-bold text-gray-600 dark:text-gray-300">{(fieldScrapeResult.durationMs / 1000).toFixed(1)}s</span>
+              </div>
+            </div>
+
+            {fieldScrapeResult.unmatchedNames.length > 0 && (
+              <div className="bg-red-50 dark:bg-red-900/20 p-4 rounded-lg border border-red-100 dark:border-red-900/30">
+                <h3 className="text-sm font-bold text-red-800 dark:text-red-400 mb-3 flex items-center gap-2">
+                  <span>⚠️</span> Unmatched Golfers ({fieldScrapeResult.unmatchedNames.length})
+                </h3>
+                <div className="max-h-60 overflow-y-auto space-y-3">
+                  {fieldScrapeResult.unmatchedNames.map(name => (
+                    <div key={name} className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-2 bg-white dark:bg-gray-800 rounded border border-red-100 dark:border-red-800">
+                      <span className="text-sm font-medium">{name}</span>
+                      <div className="flex gap-2">
+                        <select 
+                          className="text-xs p-1 border rounded bg-gray-50 dark:bg-gray-700 dark:border-gray-600 w-32 truncate"
+                          value={unmatchedAliases[name] || ''}
+                          onChange={(e) => setUnmatchedAliases(prev => ({ ...prev, [name]: e.target.value }))}
+                        >
+                          <option value="">Map to golfer...</option>
+                          {allGolfers.map(g => (
+                            <option key={g.id} value={g.id}>{g.name}</option>
+                          ))}
+                        </select>
+                        <button 
+                          onClick={() => handleAddAlias(name, unmatchedAliases[name])}
+                          disabled={!unmatchedAliases[name] || isLoading}
+                          className="px-2 py-1 bg-green-600 text-white text-xs rounded hover:bg-green-700 disabled:opacity-50"
+                        >
+                          Alias
+                        </button>
+                        <button 
+                          onClick={() => handleCreateGolfer(name, upcomingTournament?.id)}
+                          disabled={isLoading}
+                          className="px-2 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700 disabled:opacity-50"
+                        >
+                          Create New
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {fieldScrapeResult.errors.length > 0 && (
+              <div className="bg-yellow-50 dark:bg-yellow-900/20 p-4 rounded-lg border border-yellow-100 dark:border-yellow-900/30">
+                <h3 className="text-sm font-bold text-yellow-800 dark:text-yellow-400 mb-2">Errors/Warnings</h3>
+                <ul className="text-xs list-disc pl-4 space-y-1 text-yellow-700 dark:text-yellow-300">
+                  {fieldScrapeResult.errors.map((err, i) => <li key={i}>{err}</li>)}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+      </section>
 
       {/* Scraper Section */}
       <section className="bg-white dark:bg-gray-800 p-6 rounded-xl shadow-md border-2 border-green-500 shadow-green-100 dark:shadow-green-900/20">
@@ -201,7 +391,7 @@ const AdminImport = () => {
                       <span className="text-sm font-medium">{name}</span>
                       <div className="flex gap-2">
                         <select 
-                          className="text-xs p-1 border rounded bg-gray-50 dark:bg-gray-700 dark:border-gray-600"
+                          className="text-xs p-1 border rounded bg-gray-50 dark:bg-gray-700 dark:border-gray-600 w-32 truncate"
                           value={unmatchedAliases[name] || ''}
                           onChange={(e) => setUnmatchedAliases(prev => ({ ...prev, [name]: e.target.value }))}
                         >
@@ -215,7 +405,14 @@ const AdminImport = () => {
                           disabled={!unmatchedAliases[name] || isLoading}
                           className="px-2 py-1 bg-green-600 text-white text-xs rounded hover:bg-green-700 disabled:opacity-50"
                         >
-                          Add Alias
+                          Alias
+                        </button>
+                        <button 
+                          onClick={() => handleCreateGolfer(name)}
+                          disabled={isLoading}
+                          className="px-2 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700 disabled:opacity-50"
+                        >
+                          Create New
                         </button>
                       </div>
                     </div>

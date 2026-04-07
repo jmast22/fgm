@@ -25,16 +25,18 @@ export default function LeaderboardTab({ league }: LeaderboardTabProps) {
     async function loadTournaments() {
       try {
         const data = await tournamentService.getTournaments()
-        setTournaments(data)
+        const excludedIds = league.excluded_tournaments || []
+        const filtered = data.filter(t => !excludedIds.includes(t.id))
+        setTournaments(filtered)
 
         // Default to active or first upcoming tournament
-        const activeOrUpcoming = data.find(t => t.status === 'active') || data.find(t => t.status === 'upcoming')
+        const activeOrUpcoming = filtered.find(t => t.status === 'active') || filtered.find(t => t.status === 'upcoming')
         if (activeOrUpcoming) {
           setSelectedTournamentId(activeOrUpcoming.id)
-        } else if (data.length > 0) {
+        } else if (filtered.length > 0) {
           // Fallback to the most recent completed tournament
-          const completed = [...data].filter(t => t.status === 'completed').reverse()
-          setSelectedTournamentId(completed[0]?.id || data[0].id)
+          const completed = [...filtered].filter(t => t.status === 'completed').reverse()
+          setSelectedTournamentId(completed[0]?.id || filtered[0].id)
         }
       } catch (err) {
         console.error('Failed to load tournaments:', err)

@@ -262,9 +262,9 @@ export const scoringService = {
 
   /**
    * Get season-long standings for a league.
-   * Aggregates team totals across all completed tournaments.
+   * Aggregates team totals across all non-excluded completed tournaments.
    */
-  async getSeasonStandings(leagueId: string): Promise<{ team_id: string; team_name: string; total: number; tournaments_played: number }[]> {
+  async getSeasonStandings(leagueId: string, excludedTournaments: string[] = []): Promise<{ team_id: string; team_name: string; total: number; tournaments_played: number }[]> {
     // Get all tournaments that have actual score data (regardless of status)
     const { data: scoredTournaments } = await supabase
       .from('golfer_round_stats')
@@ -279,8 +279,18 @@ export const scoringService = {
       return (teams || []).map(t => ({ team_id: t.id, team_name: t.team_name, total: 0, tournaments_played: 0 }))
     }
 
-    // Deduplicate tournament IDs
+    // Deduplicate tournament IDs and filter out excluded ones
     const tournamentIds = [...new Set(scoredTournaments.map(s => s.tournament_id))]
+      .filter(tid => !excludedTournaments.includes(tid))
+    
+    if (tournamentIds.length === 0) {
+      const { data: teams } = await supabase
+        .from('teams')
+        .select('id, team_name')
+        .eq('league_id', leagueId)
+      return (teams || []).map(t => ({ team_id: t.id, team_name: t.team_name, total: 0, tournaments_played: 0 }))
+    }
+
     const tournaments = tournamentIds.map(id => ({ id }))
 
     // Aggregate each tournament's scores

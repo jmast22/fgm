@@ -54,7 +54,28 @@ CREATE TABLE IF NOT EXISTS public.tournaments (
     state TEXT,
     country TEXT,
     status tournament_status DEFAULT 'upcoming',
+    espn_event_id TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 4a. GOLFER PROFILES
+CREATE TABLE IF NOT EXISTS public.golfer_profiles (
+    golfer_id UUID REFERENCES public.golfers(id) ON DELETE CASCADE PRIMARY KEY,
+    country TEXT,
+    country_flag TEXT,
+    photo_url TEXT,
+    birth_date DATE,
+    turned_pro_year INT,
+    college TEXT,
+    owgr_rank INT,
+    fedex_rank INT,
+    wins INT DEFAULT 0,
+    top_10s INT DEFAULT 0,
+    cuts_made INT DEFAULT 0,
+    events_played INT DEFAULT 0,
+    scoring_avg DECIMAL(4,2),
+    season_year INT DEFAULT 2026,
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -130,10 +151,17 @@ CREATE TABLE IF NOT EXISTS public.draft_picks (
 CREATE TABLE IF NOT EXISTS public.team_rosters (
     team_id UUID REFERENCES public.teams(id) ON DELETE CASCADE,
     golfer_id UUID REFERENCES public.golfers(id) ON DELETE CASCADE,
+    tournament_id UUID REFERENCES public.tournaments(id) ON DELETE SET NULL,
     acquired_via acquire_method DEFAULT 'draft',
+    is_on_trade_block BOOLEAN DEFAULT false,
     acquired_at TIMESTAMPTZ DEFAULT NOW(),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
     PRIMARY KEY (team_id, golfer_id)
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_team_rosters_tournament 
+  ON public.team_rosters (team_id, golfer_id, tournament_id) 
+  WHERE tournament_id IS NOT NULL;
 
 -- 12. WEEKLY LINEUPS
 CREATE TABLE IF NOT EXISTS public.weekly_lineups (
@@ -230,14 +258,30 @@ DROP POLICY IF EXISTS "Users can insert own profile" ON public.profiles;
 CREATE POLICY "Users can insert own profile" ON public.profiles FOR INSERT WITH CHECK (auth.uid() = id);
 
 -- Golfers/Tournaments/Stats: Viewable by everyone
-DROP POLICY IF EXISTS "Golfers are viewable by everyone" ON public.golfers;
-CREATE POLICY "Golfers are viewable by everyone" ON public.golfers FOR SELECT USING (true);
+DROP POLICY IF EXISTS "Golfer round stats are viewable by everyone" ON public.golfer_round_stats;
+CREATE POLICY "Golfer round stats are viewable by everyone" ON public.golfer_round_stats FOR SELECT USING (true);
+DROP POLICY IF EXISTS "Authenticated users can manage round stats" ON public.golfer_round_stats;
+CREATE POLICY "Authenticated users can manage round stats" ON public.golfer_round_stats FOR ALL USING (auth.uid() IS NOT NULL);
+
+DROP POLICY IF EXISTS "Golfer profiles are viewable by everyone" ON public.golfer_profiles;
+CREATE POLICY "Golfer profiles are viewable by everyone" ON public.golfer_profiles FOR SELECT USING (true);
+DROP POLICY IF EXISTS "Authenticated users can manage golfer profiles" ON public.golfer_profiles;
+CREATE POLICY "Authenticated users can manage golfer profiles" ON public.golfer_profiles FOR ALL USING (auth.uid() IS NOT NULL);
+
 DROP POLICY IF EXISTS "Golfer aliases are viewable by everyone" ON public.golfer_aliases;
 CREATE POLICY "Golfer aliases are viewable by everyone" ON public.golfer_aliases FOR SELECT USING (true);
 DROP POLICY IF EXISTS "Tournaments are viewable by everyone" ON public.tournaments;
 CREATE POLICY "Tournaments are viewable by everyone" ON public.tournaments FOR SELECT USING (true);
+DROP POLICY IF EXISTS "Golfers are viewable by everyone" ON public.golfers;
+CREATE POLICY "Golfers are viewable by everyone" ON public.golfers FOR SELECT USING (true);
+DROP POLICY IF EXISTS "Authenticated users can manage golfers" ON public.golfers;
+CREATE POLICY "Authenticated users can manage golfers" ON public.golfers FOR ALL USING (auth.uid() IS NOT NULL);
+
 DROP POLICY IF EXISTS "Tournament golfers are viewable by everyone" ON public.tournament_golfers;
 CREATE POLICY "Tournament golfers are viewable by everyone" ON public.tournament_golfers FOR SELECT USING (true);
+DROP POLICY IF EXISTS "Authenticated users can manage tournament golfers" ON public.tournament_golfers;
+CREATE POLICY "Authenticated users can manage tournament golfers" ON public.tournament_golfers FOR ALL USING (auth.uid() IS NOT NULL);
+
 DROP POLICY IF EXISTS "Golfer round stats are viewable by everyone" ON public.golfer_round_stats;
 CREATE POLICY "Golfer round stats are viewable by everyone" ON public.golfer_round_stats FOR SELECT USING (true);
 

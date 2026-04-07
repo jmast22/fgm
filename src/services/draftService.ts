@@ -8,6 +8,7 @@ export interface Draft {
   current_pick: number
   draft_order: string[] // Array of team_ids
   tournament_id?: string
+  is_locked?: boolean
   created_at: string
 }
 
@@ -120,13 +121,10 @@ export const draftService = {
       // Create new draft
       const tournamentId = await this.getUpcomingTournamentId()
 
-      // If per-tournament redraft, clear current rosters to start fresh
-      if (league.draft_cycle === 'tournament') {
-        const { data: teams } = await supabase.from('teams').select('id').eq('league_id', leagueId)
-        if (teams && teams.length > 0) {
-          await supabase.from('team_rosters').delete().in('team_id', teams.map(t => t.id))
-        }
-      }
+      // Per-tournament rosters are now scoped by tournament_id in team_rosters.
+      // The draft trigger (advance_draft_pick_fn) inserts roster entries with the
+      // draft's tournament_id, so historical rosters from previous tournaments
+      // are preserved automatically. No need to delete old rosters.
 
       const shuffledIds = [...finalTeamIds].sort(() => Math.random() - 0.5)
 
@@ -158,6 +156,20 @@ export const draftService = {
       .from('drafts')
       .select('*')
       .eq('league_id', leagueId)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    if (error) throw error
+    return data
+  },
+
+  async getDraftByTournament(leagueId: string, tournamentId: string): Promise<Draft | null> {
+    const { data, error } = await supabase
+      .from('drafts')
+      .select('*')
+      .eq('league_id', leagueId)
+      .eq('tournament_id', tournamentId)
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle()
@@ -275,10 +287,10 @@ export const draftService = {
   },
 
   async resetDraft(leagueId: string): Promise<void> {
-    // 1. Get the draft ID
+    // 1. Get the draft ID and tournament_id
     const { data: draft } = await supabase
       .from('drafts')
-      .select('id')
+      .select('id, tournament_id')
       .eq('league_id', leagueId)
       .order('created_at', { ascending: false })
       .limit(1)
@@ -286,13 +298,21 @@ export const draftService = {
 
     if (!draft) return
 
-    // 2. Delete all picks (this will trigger removal from rosters if you have such triggers, but for reliability we should check)
+    // 2. Delete all picks
     await supabase.from('draft_picks').delete().eq('draft_id', draft.id)
     
     // Clean up rosters too for this league
     const { data: teams } = await supabase.from('teams').select('id').eq('league_id', leagueId)
     if (teams && teams.length > 0) {
-      await supabase.from('team_rosters').delete().in('team_id', teams.map(t => t.id))
+      if (draft.tournament_id) {
+        // Per-tournament: only wipe rosters for the draft being reset
+        await supabase.from('team_rosters').delete()
+          .in('team_id', teams.map(t => t.id))
+          .eq('tournament_id', draft.tournament_id)
+      } else {
+        // Season-long: wipe all rosters
+        await supabase.from('team_rosters').delete().in('team_id', teams.map(t => t.id))
+      }
     }
 
     // 3. Delete placeholder teams (teams with no user_id)
@@ -380,14 +400,25 @@ export const draftService = {
     }
   },
 
-  async updateDraftOrder(leagueId: string, teamIds: string[]): Promise<void> {
-    const { data: existingDraft } = await supabase
+  async updateDraftOrder(leagueId: string, teamIds: string[], tournamentId?: string): Promise<void> {
+    // If tournamentId is provided, we look for that specific draft
+    const query = supabase
       .from('drafts')
-      .select('id, status')
+      .select('id, status, is_locked')
       .eq('league_id', leagueId)
+    
+    if (tournamentId) {
+      query.eq('tournament_id', tournamentId)
+    }
+
+    const { data: existingDraft } = await query
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle()
+
+    if (existingDraft && existingDraft.is_locked) {
+      throw new Error('This draft order is locked and cannot be modified.')
+    }
 
     if (existingDraft && existingDraft.status !== 'completed') {
       const { error } = await supabase
@@ -396,12 +427,10 @@ export const draftService = {
         .eq('id', existingDraft.id)
       if (error) throw error
     } else {
-      // Only create a new pending draft record if we are in tournament redraft mode
-      // or if no draft exists yet.
       const { data: league } = await supabase.from('leagues').select('draft_cycle').eq('id', leagueId).single()
       
       if (!existingDraft || league?.draft_cycle === 'tournament') {
-        const tournamentId = await this.getUpcomingTournamentId()
+        const targetTournamentId = tournamentId || await this.getUpcomingTournamentId()
         const { error } = await supabase
           .from('drafts')
           .insert({
@@ -410,10 +439,18 @@ export const draftService = {
             status: 'pending',
             current_round: 1,
             current_pick: 1,
-            tournament_id: tournamentId
+            tournament_id: targetTournamentId
           })
         if (error) throw error
       }
     }
+  },
+
+  async lockDraftOrder(draftId: string, locked: boolean): Promise<void> {
+    const { error } = await supabase
+      .from('drafts')
+      .update({ is_locked: locked })
+      .eq('id', draftId)
+    if (error) throw error
   }
 }

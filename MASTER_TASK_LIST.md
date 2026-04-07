@@ -153,27 +153,35 @@
 
 ---
 
-## Phase 12 — Polish & Optimization
+## Phase 12 — Polish & Optimization ✅
 
-- [ ] Main Dashboard (active leagues, upcoming tournaments, team summary)
-- [ ] Tournament page (details, field with rankings, leaderboard, golfer stats)
-- [ ] Responsive navigation (bottom tabs mobile, sidebar desktop, breadcrumbs)
-- [ ] Micro-animations (page transitions, hover effects, loading skeletons)
-- [ ] Dark mode toggle
-- [ ] Error boundaries & empty states
-- [ ] Performance optimization (code splitting, lazy loading)
+> **Goal:** Enhance PWA mobile experience and overall application feel.
+
+### Tasks
+- [x] **Main Dashboard**: Replace simple lists with a "Cockpit" view:
+  - [x] High-level "My Leagues" widget (points/rank summary).
+  - [x] "Upcoming Tournament" card with course info & quick links.
+  - [x] Team summary (active golfers status).
+- [x] **Micro-animations**: Integrate `framer-motion` for smoother user experience:
+  - [x] Page transitions (Exit/Enter fades).
+  - [x] Interactive hover effects on cards.
+  - [x] Loading skeletons for data-heavy views.
+- [x] **Dark mode toggle**: Implement global theme management and persistence.
+- [x] **Error Boundaries & Empty States**: Replace white screens/empty lists with user-friendly feedback.
+- [x] **Responsive Navigation**: (Already implemented in Phase 11/18 updates)
+- [x] **Performance Optimization**: (Already implemented with React.lazy)
 
 ---
 
-## Phase 13 — Expanded Commissioner Powers & Team Governance
+## Phase 13 — Expanded Commissioner Powers & Team Governance ✅
 
 - [x] Un-lock League Settings page completely post-draft for commissioners (allowing post-draft edits to max_teams, roster_size, etc).
 - [x] Add Sub-Tab Navigation in League Settings: Break settings into "Core Info", "Scoring", "Draft Order", and "Teams" (to manage names and owners).
-- [ ] Team Claiming logic: When a user joins via invite code, prompt them to pick which orphaned/placeholder team they want to claim from a list.
+- [x] Team Claiming logic: When a user joins via invite code, prompt them to pick which orphaned/placeholder team they want to claim from a list.
 - [x] Orphan a Team (Remove Owner): Allow commissioners (via Teams settings tab) to detach a user from a team.
 - [x] Commissioner Roster Manipulation: Allow the commissioner to view any team's Roster tab and manipulate it as if they were the owner.
 - [x] Post-Draft Pick Editing (Optional): Allow commissioners to manually swap picks or adjust draft boards retroactively if errors occurred without resetting the whole draft.
-- [ ] Transfer Team Ownership: Allow commissioners to manually assign an "orphaned" team to a specific new user.
+- [x] Transfer Team Ownership: Allow commissioners to manually assign an "orphaned" team to a specific new user.
 
 ---
 
@@ -222,3 +230,130 @@
 - [x] Update "Roster" tab to display player scores mirroring the individual golfers panel in the Leaderboard, refreshing after each scrape.
 - [x] Ensure the "Roster" tab tournament filter accurately displays historical (locked) rosters for previous tournaments.
 - [x] Verify that cumulative scoring correctly groups points by team across multiple tournaments regardless of roster turnover.
+---
+
+## Phase 16 — Advanced Draft Order Management & Randomizer ✅
+
+- [x] **Tournament-Based Draft Order Filter**:
+    - [x] Add a tournament filter (from `Schedule`) to the "Draft Order" sub-tab in League Settings.
+    - [x] Allow viewing historical draft orders for each tournament.
+    - [x] If `draft_cycle` is 'tournament', ensure only upcoming tournaments can have their order randomized/set.
+- [x] **Draft Order Randomizer (Spinning Wheel)**:
+    - [x] Implement a "Randomize Order" mode for commissioners.
+    - [x] Build a spinning wheel UI component that lists all teams in the league.
+    - [x] Randomization Logic:
+        - [x] Click button → Wheel spins → Selects a team.
+        - [x] Selected team is assigned to the next available draft slot (1, 2, 3...).
+        - [x] Selected team is removed from the wheel for subsequent spins.
+        - [x] Repeat until all teams are assigned a slot.
+- [x] **Draft Initialization & "Set Order" Logic**:
+    - [x] Add a "Confirm & Set Draft Order" button once the wheel has finished all picks.
+    - [x] Implement `setDraftOrder` logic:
+        - [x] Update `drafts` table with the new order and associated `tournament_id`.
+        - [x] Initialize the draft for that tournament (status: 'pending' or 'active').
+        - [x] Update the League Settings filter to include the newly targeted tournament.
+- [x] **UI Polish**:
+    - [x] Sound effects and visual flair for the spinning wheel.
+    - [x] "Draft Order Set" success state and redirection options.
+
+---
+
+## Phase 17 — Automated Tournament Field Scraper
+
+- [x] **Next Tournament Discovery**: Add `fetchUpcomingTournament()` to find the first tournament in the database with a `start_date` on or after the current local date.
+- [x] **Field Scraping Logic**: Implement `scrapeTournamentField(tournamentId: string)`:
+    - Fetch the ESPN scoreboard/event data.
+    - Match the ESPN competitors to the master `golfers` list using the existing fuzzy matching and alias system.
+    - Sync the matched golfers into the `tournament_golfers` table for the specified tournament.
+- [x] **New Golfer Detection**: Add logic to flag golfers who exist in the ESPN field but are missing from the master `golfers` table, allowing for manual addition.
+- [x] Add Admin UI to trigger this for the upcoming tournament.
+- [x] **Awaiting Draft Status**: If `draft_cycle` is 'tournament' and the draft for the selected tournament is not completed, golfers show as 'Awaiting Draft' and adding is disabled.
+- [x] **Live Refresh on Scrape**: Implement Supabase Realtime subscription in `GolfersTab` to automatically refresh the list when the tournament field is updated via scraper.
+
+---
+
+## Phase 18 — Tournament-Scoped Rosters & Bug Fixes ✅
+
+> **Goal:** Fix per-tournament roster management so rosters don't bleed across tournaments, historical rosters are preserved, and the Golfers tab filter works correctly.
+
+### Step 1: Database Migration
+- [x] Add `tournament_id` column (nullable FK → `tournaments`) to `team_rosters`.
+- [x] Update the `team_rosters` primary key to `(team_id, golfer_id, tournament_id)` so per-tournament uniqueness is enforced.
+- [x] Add `espn_event_id` column to `tournaments` table for reliable ESPN linking.
+- [x] Update RLS policies for modified tables.
+
+### Step 2: Fix Roster Scoping
+- [x] **`draftService.ts`**: Stop destructively deleting all rosters in `startDraft()`. Instead, create new roster entries with the new `tournament_id`.
+- [x] **`rosterService.ts`**: Update `getTeamRoster()` to accept optional `tournamentId`. When `draft_cycle === 'tournament'`, filter by tournament.
+- [x] **`rosterService.ts`**: Update `addGolfer()` to include `tournament_id` when applicable.
+- [x] **`GolfersTab.tsx`**: Filter roster status by selected tournament for per-tournament leagues (fix "On Roster" bleeding from previous tournaments).
+- [x] **`RosterTab.tsx`**: Pass tournament context to roster queries. Historical roster viewing preserved for free.
+- [x] **Supabase trigger** (`advance_draft_pick_fn`): If it exists, update to include `tournament_id` in roster inserts.
+- [x] **Roster history**: Show roster as it was at tournament end. Optionally annotate any mid-tournament transactions.
+
+### Step 3: Fix "All Golfers" Filter Reset
+- [x] **`GolfersTab.tsx`**: Add `isInitialLoad` ref so auto-selection of the upcoming tournament only happens on first mount, not on every `loadData()` re-run.
+- [x] Ensure selecting "All Golfers (No Filter)" stays selected and doesn't snap back.
+
+---
+
+## Phase 19 — Scraper Infrastructure & Golfer Profiles
+
+> **Goal:** Replace all CSV imports with automated ESPN scrapers. Add golfer profile data and player card UI.
+
+### Scraper 1: Season Schedule Scraper
+- [ ] Implement `scrapeSeasonSchedule()` in `scraperService.ts`.
+    - Source: ESPN Calendar endpoint (`leagues[0].calendar[]`).
+    - Upsert into `tournaments` table with `espn_event_id`, name, and dates.
+    - Commissioner selects which tournaments the league will play from the full schedule.
+- [ ] Add Admin UI button ("Sync Schedule").
+
+### Scraper 2: PGA Tour Player Roster Scraper
+- [ ] Implement `scrapePGAPlayers()` in `scraperService.ts`.
+    - Source: ESPN Athletes endpoint (`/athletes?limit=500`).
+    - Upsert into `golfers` table (match by name/alias, create new entries for unknowns).
+    - Optionally seed basic `golfer_profiles` data (country, photo).
+- [ ] Add Admin UI button ("Sync Players").
+
+### Scraper 3: Golfer Profiles & Rankings Scraper
+- [ ] Create `golfer_profiles` table in Supabase:
+    - `golfer_id` (PK, FK → golfers), `country`, `country_flag`, `photo_url`, `birth_date`, `turned_pro_year`, `college`, `owgr_rank`, `fedex_rank`, `wins`, `top_10s`, `cuts_made`, `events_played`, `scoring_avg`, `season_year`, `updated_at`.
+- [ ] Implement `scrapeGolferProfiles()` in `scraperService.ts`.
+    - Source: Individual ESPN athlete pages.
+    - Current-season stats + career highlights.
+    - Rate-limited batching (~50ms between calls).
+- [ ] Add Admin UI button ("Refresh Profiles").
+- [ ] Add RLS policies for `golfer_profiles`.
+
+### Golfer Card UI
+- [ ] Create `GolferCard` component (modal or expandable card).
+    - Photo, country flag, rankings (OWGR, FedEx).
+    - Season stats: events played, wins, top-10s, cuts made, scoring avg.
+    - Career highlights summary.
+- [ ] Make golfer names clickable throughout the app (Golfers tab, Roster tab, Leaderboard, Draft).
+- [ ] Opens `GolferCard` on click.
+
+### Unified Scraper Dashboard
+- [ ] Reorganize `AdminImport.tsx` into a clean, ordered scraper panel:
+    1. Sync Schedule → `tournaments`
+    2. Sync Players → `golfers`
+    3. Fetch Field → `tournament_golfers`
+    4. Scrape Scores → `golfer_round_stats`
+    5. Refresh Profiles → `golfer_profiles`
+
+### Future: Automation Path
+- [ ] Design scrapers to be callable via Supabase Edge Functions / cron:
+    - Schedule sync: weekly
+    - Player sync: monthly
+    - Field scrape: 3 days before each tournament
+    - Score scrape: every 15 min during active tournaments
+    - Profile refresh: weekly
+
+---
+
+## Phase 20 — Tournament Information
+
+- [ ] **Tournament Hub Page**: Details, field with rankings, leaderboard, and golfer stats specific to the event.
+- [ ] **Course Intelligence**: Research and integrate course metadata (par, distance, course records, historical winners).
+- [ ] **Historical Context**: Display previous years' results for the same event where available.
+- [ ] **Tournament Media**: Add support for course maps or high-quality tournament-specific imagery.

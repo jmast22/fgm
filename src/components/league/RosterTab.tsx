@@ -6,6 +6,7 @@ import type { LineupGolfer } from '../../services/rosterService'
 import type { Tournament } from '../../services/tournamentService'
 import type { League, Team } from '../../services/leagueService'
 import { useAuth } from '../../context/AuthContext'
+import { draftService, type Draft } from '../../services/draftService'
 
 interface RosterTabProps {
   league: League;
@@ -27,6 +28,7 @@ export default function RosterTab({ league, teams }: RosterTabProps) {
   const [loadingAvailable, setLoadingAvailable] = useState(false)
   const [addingGolfer, setAddingGolfer] = useState<string | null>(null)
   const [modalSearchTerm, setModalSearchTerm] = useState('')
+  const [currentDraft, setCurrentDraft] = useState<Draft | null>(null)
   const initialLoadRef = useRef(true)
 
   // Default selected team to user's team, but fallback to first team
@@ -49,14 +51,16 @@ export default function RosterTab({ league, teams }: RosterTabProps) {
     async function loadTournaments() {
       try {
         const data = await tournamentService.getTournaments()
-        setTournaments(data)
+        const excludedIds = league.excluded_tournaments || []
+        const filtered = data.filter(t => !excludedIds.includes(t.id))
+        setTournaments(filtered)
         
         // Default to the first active or upcoming tournament
-        const activeOrUpcoming = data.find(t => t.status === 'active' || t.status === 'upcoming')
+        const activeOrUpcoming = filtered.find(t => t.status === 'active' || t.status === 'upcoming')
         if (activeOrUpcoming) {
           setSelectedTournamentId(activeOrUpcoming.id)
-        } else if (data.length > 0) {
-          setSelectedTournamentId(data[0].id)
+        } else if (filtered.length > 0) {
+          setSelectedTournamentId(filtered[0].id)
         }
       } catch (err) {
         console.error('Failed to load tournaments:', err)
@@ -72,11 +76,17 @@ export default function RosterTab({ league, teams }: RosterTabProps) {
     async function loadData() {
       setLoading(true)
       try {
-        const [r, l, rawStats] = await Promise.all([
-          rosterService.getTeamRoster(selectedTeamId),
+        // For per-tournament leagues, scope roster to selected tournament
+        const rosterTournamentId = league.draft_cycle === 'tournament' ? selectedTournamentId : undefined
+
+        const [r, l, rawStats, draft] = await Promise.all([
+          rosterService.getTeamRoster(selectedTeamId, rosterTournamentId),
           rosterService.getWeeklyLineup(selectedTeamId, selectedTournamentId),
-          scoringService.getTournamentRoundStats(selectedTournamentId)
+          scoringService.getTournamentRoundStats(selectedTournamentId),
+          draftService.getDraftByTournament(league.id, selectedTournamentId)
         ])
+        
+        setCurrentDraft(draft)
         
         // Process stats
         const scoreMap: Record<string, GolferTournamentScore> = {}
@@ -90,18 +100,30 @@ export default function RosterTab({ league, teams }: RosterTabProps) {
 
         // Merge roster with lineup info
         const selectedTournament = tournaments.find(t => t.id === selectedTournamentId)
-        const isHistorical = selectedTournament?.status === 'completed' || (selectedTournament?.status === 'active' && league.draft_cycle === 'tournament')
 
         let mergedLineup: LineupGolfer[] = []
         
-        if (isHistorical && l && l.length > 0) {
-          // For historical views, the lineup record is the source of truth for who was on the team
+        const hasLineup = l && l.length > 0
+        const hasDraft = currentDraft && (currentDraft.status === 'active' || currentDraft.status === 'completed')
+
+        if (hasLineup) {
+          // 1. If we have a saved lineup for this specific tournament, that is always truth #1
           mergedLineup = l.map(lg => ({
             ...lg,
             acquired_via: lg.acquired_via || 'draft'
           }))
-        } else {
-          // For current/active views or if no lineup was saved, use current roster and overlay lineup info
+        } else if (league.draft_cycle === 'season') {
+          // 2. In seasoned leagues, current roster is the fallback for all tournaments
+          mergedLineup = r.map(golfer => {
+            const lineupItem = l?.find(li => li.id === golfer.id)
+            return {
+              ...golfer,
+              is_starter: lineupItem ? lineupItem.is_starter : false
+            }
+          })
+        } else if (hasDraft && (selectedTournament?.status === 'upcoming' || selectedTournament?.status === 'active')) {
+          // 3. In tournament redraft leagues, only use current roster if this tournament 
+          // is either currently being drafted (active) or is the upcoming one.
           mergedLineup = r.map(golfer => {
             const lineupItem = l?.find(li => li.id === golfer.id)
             return {
@@ -110,6 +132,7 @@ export default function RosterTab({ league, teams }: RosterTabProps) {
             }
           })
         }
+
         setLineup(mergedLineup)
         // Mark initial load as complete AFTER setting the lineup
         setTimeout(() => {
@@ -217,7 +240,8 @@ export default function RosterTab({ league, teams }: RosterTabProps) {
     if (!selectedTeamId) return
     setAddingGolfer(golferId)
     try {
-      await rosterService.addGolfer(selectedTeamId, golferId)
+      await rosterService.addGolfer(selectedTeamId, golferId, 'waiver', 
+        league.draft_cycle === 'tournament' ? selectedTournamentId : undefined)
       
       // Refresh lineup
       const [r, l] = await Promise.all([
@@ -258,7 +282,14 @@ export default function RosterTab({ league, teams }: RosterTabProps) {
   const myTeam = teams.find(t => t.user_id === user?.id)
   const isEditingOwnTeam = selectedTeamId === myTeam?.id || isCommish
   const selectedTournament = tournaments.find(t => t.id === selectedTournamentId)
-  const isActuallyLocked = selectedTournament?.status === 'completed' || selectedTournament?.status === 'active'
+  
+  let isActuallyLocked = false
+  if (league.draft_cycle === 'tournament') {
+    isActuallyLocked = selectedTournament?.status === 'completed'
+  } else {
+    isActuallyLocked = selectedTournament?.status === 'completed' || selectedTournament?.status === 'active'
+  }
+  
   const isLocked = isActuallyLocked && !isCommishUnlocked
 
   const starters = lineup.filter(g => g.is_starter)
@@ -271,6 +302,11 @@ export default function RosterTab({ league, teams }: RosterTabProps) {
   )
 
   if (loading && !lineup.length) return <div className="p-12 text-center text-surface-400">Loading roster...</div>
+
+  const showDraftNotSet = league.draft_cycle === 'tournament' && 
+                          !loading && 
+                          (!currentDraft || currentDraft.status === 'pending') &&
+                          !lineup.length
 
   return (
     <div className="space-y-4">
@@ -370,6 +406,20 @@ export default function RosterTab({ league, teams }: RosterTabProps) {
       )}
 
       {/* Unified Roster Container */}
+      {showDraftNotSet ? (
+        <div className="bg-surface-900/40 border border-surface-700/50 rounded-2xl p-12 text-center flex flex-col items-center justify-center space-y-4 shadow-xl">
+          <div className="w-20 h-20 rounded-full bg-surface-800 border border-surface-700 flex items-center justify-center text-4xl shadow-inner animate-pulse">🗓️</div>
+          <div className="space-y-1">
+            <h3 className="text-xl font-bold text-surface-100">Draft Order Not Set</h3>
+            <p className="text-surface-500 max-w-xs mx-auto text-sm">The commissioner hasn't finalized the draft order for {selectedTournament?.name} yet.</p>
+          </div>
+          {isCommish && (
+             <div className="mt-4 p-4 bg-primary-500/5 border border-primary-500/10 rounded-xl max-w-sm">
+                <p className="text-primary-400 text-xs font-medium">Commissioners can set the order in <span className="font-bold">Settings &gt; Draft Order</span> randomize for this tournament.</p>
+             </div>
+          )}
+        </div>
+      ) : (
       <div className="bg-surface-800/40 border border-surface-700/50 rounded-xl overflow-hidden shadow-lg">
         {/* Starters Section */}
         <div className="px-3 py-1.5 border-b border-surface-700/50 bg-primary-900/10 flex items-center justify-between">
@@ -429,6 +479,7 @@ export default function RosterTab({ league, teams }: RosterTabProps) {
           )}
         </div>
       </div>
+      )}
 
       {/* Add Golfer Modal */}
       {showAddModal && (

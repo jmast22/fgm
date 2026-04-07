@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react'
 import { tournamentService } from '../../services/tournamentService'
 import { scoringService, formatScore, scoreColor } from '../../services/scoringService'
+import { leagueService } from '../../services/leagueService'
 import type { TeamTournamentScore } from '../../services/scoringService'
 import type { Tournament } from '../../services/tournamentService'
 import type { League } from '../../services/leagueService'
+import { useAuth } from '../../context/AuthContext'
 
 interface ScheduleTabProps {
   league: League;
@@ -14,11 +16,16 @@ interface TournamentResults {
   allTeams: TeamTournamentScore[]
 }
 
-export default function ScheduleTab({ league }: ScheduleTabProps) {
+export default function ScheduleTab({ league: initialLeague }: ScheduleTabProps) {
+  const { user } = useAuth()
+  const [league, setLeague] = useState<League>(initialLeague)
   const [tournaments, setTournaments] = useState<Tournament[]>([])
   const [loading, setLoading] = useState(true)
   const [tournamentResults, setTournamentResults] = useState<Record<string, TournamentResults>>({})
   const [expandedTournament, setExpandedTournament] = useState<string | null>(null)
+  const [updatingId, setUpdatingId] = useState<string | null>(null)
+
+  const isCommish = user?.id === league.commissioner_id
 
   useEffect(() => {
     async function loadSchedule() {
@@ -55,7 +62,32 @@ export default function ScheduleTab({ league }: ScheduleTabProps) {
     loadSchedule()
   }, [league.id])
 
+  const handleToggleTournament = async (tournamentId: string) => {
+    if (!isCommish || updatingId) return
+    setUpdatingId(tournamentId)
+    
+    try {
+      const currentExcluded = league.excluded_tournaments || []
+      let newExcluded: string[]
+      
+      if (currentExcluded.includes(tournamentId)) {
+        newExcluded = currentExcluded.filter(id => id !== tournamentId)
+      } else {
+        newExcluded = [...currentExcluded, tournamentId]
+      }
+      
+      const updated = await leagueService.updateLeague(league.id, { excluded_tournaments: newExcluded })
+      setLeague(updated)
+    } catch (err: any) {
+      alert('Failed to update schedule: ' + err.message)
+    } finally {
+      setUpdatingId(null)
+    }
+  }
+
   if (loading) return <div className="p-12 text-center text-surface-400">Loading schedule...</div>
+
+  const activeTournaments = tournaments.filter(t => !(league.excluded_tournaments || []).includes(t.id))
 
   return (
     <div className="bg-surface-800/40 border border-surface-700/50 rounded-xl overflow-hidden shadow-lg">
@@ -64,7 +96,7 @@ export default function ScheduleTab({ league }: ScheduleTabProps) {
           <span className="text-primary-400">📅</span> Tournament Schedule
         </h2>
         <span className="text-[10px] text-surface-500 font-bold uppercase tracking-tighter">
-          {tournaments.length} tournaments • Roto Style
+          {activeTournaments.length} tournaments • Roto Style
         </span>
       </div>
 
@@ -73,6 +105,8 @@ export default function ScheduleTab({ league }: ScheduleTabProps) {
           const results = tournamentResults[t.id]
           const hasResults = !!results
           const isExpanded = expandedTournament === t.id
+          const isExcluded = (league.excluded_tournaments || []).includes(t.id)
+          const isUpcoming = t.status === 'upcoming'
           
           return (
             <div key={t.id}>
@@ -83,12 +117,29 @@ export default function ScheduleTab({ league }: ScheduleTabProps) {
                 } ${isExpanded ? 'bg-surface-800/30' : ''}`}
               >
                 <div className="flex items-center gap-5">
+                  {isCommish && isUpcoming && (
+                    <div className="flex items-center justify-center mr-1">
+                      <input 
+                        type="checkbox" 
+                        checked={!isExcluded}
+                        disabled={updatingId === t.id}
+                        onChange={(e) => {
+                          e.stopPropagation()
+                          handleToggleTournament(t.id)
+                        }}
+                        className="w-5 h-5 rounded-md bg-surface-900 border-surface-700 text-primary-600 focus:ring-primary-500/50 transition-all cursor-pointer accent-primary-600"
+                        onClick={(e) => e.stopPropagation()} // Prevent expansion
+                      />
+                    </div>
+                  )}
+
                   <div className={`w-12 h-12 rounded-xl border flex flex-col items-center justify-center font-display leading-none transition-all
-                    ${t.status === 'active' 
-                      ? 'bg-primary-600/20 border-primary-500/30 text-primary-400' 
-                      : t.status === 'completed'
-                      ? 'bg-surface-900 border-surface-700 text-surface-500'
-                      : 'bg-surface-900 border-surface-700 text-surface-300'}
+                    ${isExcluded ? 'bg-surface-900/40 border-surface-800 text-surface-600' : 
+                      t.status === 'active' 
+                        ? 'bg-primary-600/20 border-primary-500/30 text-primary-400' 
+                        : t.status === 'completed'
+                        ? 'bg-surface-900 border-surface-700 text-surface-500'
+                        : 'bg-surface-900 border-surface-700 text-surface-300'}
                   `}>
                     <span className="text-[10px] uppercase font-black tracking-widest mb-1">
                       {new Date(t.start_date).toLocaleString('default', { month: 'short' })}
@@ -98,10 +149,14 @@ export default function ScheduleTab({ league }: ScheduleTabProps) {
                     </span>
                   </div>
                   <div>
-                    <div className="font-bold text-lg text-surface-100 group-hover:text-primary-400 transition-colors">
+                    <div className={`font-bold text-lg transition-colors ${
+                      isExcluded ? 'text-surface-600' : 'text-surface-100 group-hover:text-primary-400'
+                    }`}>
                       {t.name}
                     </div>
-                    <div className="text-sm text-surface-500 flex items-center gap-2 mt-0.5">
+                    <div className={`text-sm flex items-center gap-2 mt-0.5 ${
+                      isExcluded ? 'text-surface-700' : 'text-surface-500'
+                    }`}>
                       <span>{t.course_name}</span>
                       <span className="w-1 h-1 rounded-full bg-surface-700" />
                       <span>{t.city}, {t.state}</span>
@@ -113,11 +168,12 @@ export default function ScheduleTab({ league }: ScheduleTabProps) {
                   <div className="hidden sm:block">
                     <div className="text-[10px] text-surface-500 uppercase tracking-widest font-bold mb-1">Status</div>
                     <div className={`text-xs font-black uppercase tracking-tighter px-2 py-1 rounded border
-                      ${t.status === 'active' ? 'bg-primary-500/10 border-primary-500/20 text-primary-400' : 
+                      ${isExcluded ? 'bg-surface-900/50 border-surface-800 text-surface-600' :
+                        t.status === 'active' ? 'bg-primary-500/10 border-primary-500/20 text-primary-400' : 
                         t.status === 'completed' ? 'bg-surface-900 border-surface-700 text-surface-500' :
                         'bg-surface-700/30 border-surface-700 text-surface-400'}
                     `}>
-                      {t.status === 'active' ? 'In Progress' : t.status === 'completed' ? 'Finished' : 'Upcoming'}
+                      {isExcluded ? 'Removed' : t.status === 'active' ? 'In Progress' : t.status === 'completed' ? 'Finished' : 'Upcoming'}
                     </div>
                   </div>
                   

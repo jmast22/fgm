@@ -13,6 +13,7 @@ export interface League {
   waiver_rule: string
   draft_cycle?: 'season' | 'tournament'
   trade_deadline?: string
+  excluded_tournaments?: string[]
   created_at?: string
   updated_at?: string
 }
@@ -123,16 +124,26 @@ export const leagueService = {
     return league as League
   },
 
-  // Join a league via invite code
+  // Join a league via invite code (Create NEW team)
   async joinLeague(userId: string, inviteCode: string, teamName: string) {
     // 1. Find league by invite code
     const { data: league, error: findError } = await supabase
       .from('leagues')
-      .select('id, roster_size')
-      .eq('invite_code', inviteCode)
+      .select('id, roster_size, max_teams')
+      .eq('invite_code', inviteCode.toUpperCase())
       .single()
 
     if (findError || !league) throw new Error('Invalid invite code or league not found.')
+
+    // Check if league is full
+    const { count: teamCount } = await supabase
+      .from('teams')
+      .select('*', { count: 'exact', head: true })
+      .eq('league_id', league.id)
+
+    if (teamCount && teamCount >= (league.max_teams || 12)) {
+      throw new Error('League is full. No more teams can be created.')
+    }
 
     // 2. Add as member
     const { error: memberError } = await supabase
@@ -142,10 +153,7 @@ export const leagueService = {
         user_id: userId
       })
 
-    if (memberError) {
-      if (memberError.code === '23505') {
-        throw new Error('You are already a member of this league.')
-      }
+    if (memberError && memberError.code !== '23505') {
       throw memberError
     }
 
@@ -159,12 +167,92 @@ export const leagueService = {
       })
 
     if (teamError) {
-      // Revert if team creation fails
-      await supabase.from('league_members').delete().match({ league_id: league.id, user_id: userId })
+      // Revert member if team creation fails (only if they weren't already a member)
+      if (memberError?.code !== '23505') {
+        await supabase.from('league_members').delete().match({ league_id: league.id, user_id: userId })
+      }
       throw teamError
     }
 
     return league.id
+  },
+
+  async getLeagueByInviteCode(inviteCode: string) {
+    const { data: league, error } = await supabase
+      .from('leagues')
+      .select(`
+        *,
+        teams (*)
+      `)
+      .eq('invite_code', inviteCode.toUpperCase())
+      .single()
+
+    if (error) throw new Error('Invalid invite code.')
+    return league
+  },
+
+  async claimTeam(userId: string, teamId: string) {
+    // 1. Get the team
+    const { data: team, error: fetchError } = await supabase
+      .from('teams')
+      .select('league_id, user_id')
+      .eq('id', teamId)
+      .single()
+
+    if (fetchError) throw fetchError
+    if (team.user_id) throw new Error('This team is already claimed.')
+
+    // 2. Add as member
+    const { error: memberError } = await supabase
+      .from('league_members')
+      .insert({
+        league_id: team.league_id,
+        user_id: userId
+      })
+
+    if (memberError && memberError.code !== '23505') {
+      throw memberError
+    }
+
+    // 3. Update team with user_id
+    const { error: teamError } = await supabase
+      .from('teams')
+      .update({ user_id: userId })
+      .eq('id', teamId)
+
+    if (teamError) throw teamError
+
+    return team.league_id
+  },
+
+  async assignTeamOwner(teamId: string, userId: string) {
+    const { data: team, error: fetchError } = await supabase
+      .from('teams')
+      .select('league_id')
+      .eq('id', teamId)
+      .single()
+
+    if (fetchError) throw fetchError
+
+    // 1. Ensure they are a member
+    const { error: memberError } = await supabase
+      .from('league_members')
+      .insert({
+        league_id: team.league_id,
+        user_id: userId
+      })
+
+    if (memberError && memberError.code !== '23505') {
+      throw memberError
+    }
+
+    // 2. Assign team
+    const { error: teamError } = await supabase
+      .from('teams')
+      .update({ user_id: userId })
+      .eq('id', teamId)
+
+    if (teamError) throw teamError
   },
 
   // Update commissioner settings
@@ -178,6 +266,56 @@ export const leagueService = {
 
     if (error) throw error
     return data as League
+  },
+
+  async deleteLeague(leagueId: string) {
+    // 1. Get all teams in the league
+    const { data: teams } = await supabase
+      .from('teams')
+      .select('id')
+      .eq('league_id', leagueId)
+    
+    if (teams && teams.length > 0) {
+      const teamIds = teams.map(t => t.id)
+      
+      // 2. Delete team-related data (Order matters for FKs)
+      await supabase.from('team_rosters').delete().in('team_id', teamIds)
+      
+      const { data: pickups } = await supabase.from('waiver_pickups').select('id').in('team_id', teamIds)
+      if (pickups && pickups.length > 0) {
+        await supabase.from('waiver_pickups').delete().in('id', pickups.map(p => p.id))
+      }
+
+      await supabase.from('trades').delete().eq('league_id', leagueId)
+      
+      const { data: lineups } = await supabase.from('weekly_lineups').select('id').in('team_id', teamIds)
+      if (lineups && lineups.length > 0) {
+        const lineupIds = lineups.map(l => l.id)
+        await supabase.from('lineup_golfers').delete().in('lineup_id', lineupIds)
+        await supabase.from('weekly_lineups').delete().in('id', lineupIds)
+      }
+      
+      const { data: drafts } = await supabase.from('drafts').select('id').eq('league_id', leagueId)
+      if (drafts && drafts.length > 0) {
+        const draftIds = drafts.map(d => d.id)
+        await supabase.from('draft_picks').delete().in('draft_id', draftIds)
+        await supabase.from('drafts').delete().in('id', draftIds)
+      }
+
+      // 3. Delete members
+      await supabase.from('league_members').delete().eq('league_id', leagueId)
+
+      // 4. Delete teams
+      await supabase.from('teams').delete().eq('league_id', leagueId)
+    }
+
+    // 5. Finally delete the league
+    const { error } = await supabase
+      .from('leagues')
+      .delete()
+      .eq('id', leagueId)
+
+    if (error) throw error
   },
 
   async updateTeamName(teamId: string, teamName: string) {

@@ -13,6 +13,8 @@ import TradesTab from '../components/league/TradesTab'
 import LeagueActivity from '../components/league/LeagueActivity'
 import LeaderboardTab from '../components/league/LeaderboardTab'
 import { scoringService, formatScore, scoreColor } from '../services/scoringService'
+import { tournamentService, type Tournament } from '../services/tournamentService'
+import SpinningWheel from '../components/league/SpinningWheel'
 
 type TabId = 'roster' | 'leaderboard' | 'league' | 'draft' | 'settings' | 'schedule' | 'golfers' | 'trades';
 
@@ -47,12 +49,21 @@ export default function LeagueDashboard() {
   const [editDraftOrder, setEditDraftOrder] = useState<string[]>([])
   const [settingsTab, setSettingsTab] = useState<'core' | 'scoring' | 'draft' | 'teams'>('core')
   const [seasonStandings, setSeasonStandings] = useState<Record<string, { total: number; tournaments_played: number }>>({})
+  const [tournaments, setTournaments] = useState<Tournament[]>([])
+  const [selectedTournamentId, setSelectedTournamentId] = useState<string>('')
+  const [isRandomizing, setIsRandomizing] = useState(false)
+  const [randomizedOrder, setRandomizedOrder] = useState<string[]>([])
+  const [remainingTeams, setRemainingTeams] = useState<string[]>([])
+  const [wheelSpinning, setWheelSpinning] = useState(false)
+  const [wheelItems, setWheelItems] = useState<string[]>([])
+  const [isDraftLocked, setIsDraftLocked] = useState(false)
+  const [currentDraftId, setCurrentDraftId] = useState<string | null>(null)
 
 
   useEffect(() => {
     if (!id) return
 
-    async function fetchData() {
+    async function loadData() {
       try {
         const [l, t, m] = await Promise.all([
           leagueService.getLeagueById(id!),
@@ -73,12 +84,31 @@ export default function LeagueDashboard() {
 
         // Load season standings
         try {
-          const standings = await scoringService.getSeasonStandings(l.id)
+          const standings = await scoringService.getSeasonStandings(l.id, l.excluded_tournaments || [])
           const standingsMap: Record<string, { total: number; tournaments_played: number }> = {}
           standings.forEach(s => { standingsMap[s.team_id] = { total: s.total, tournaments_played: s.tournaments_played } })
           setSeasonStandings(standingsMap)
         } catch (e) {
           console.error('Failed to load standings:', e)
+        }
+
+        // Load tournaments
+        try {
+          const tourneys = await tournamentService.getTournaments()
+          setTournaments(tourneys)
+          
+          // Default to the first upcoming or active tournament that is NOT excluded
+          const excludedIds = l.excluded_tournaments || []
+          const activeOrUpcoming = tourneys.find(tourney => tourney.status !== 'completed' && !excludedIds.includes(tourney.id))
+          
+          if (activeOrUpcoming) setSelectedTournamentId(activeOrUpcoming.id)
+          else if (tourneys.length > 0) {
+            // If all active/upcoming are excluded, pick the first non-excluded one overall
+            const firstNonExcluded = tourneys.find(tourney => !excludedIds.includes(tourney.id))
+            setSelectedTournamentId(firstNonExcluded ? firstNonExcluded.id : tourneys[0].id)
+          }
+        } catch (err) {
+          console.error('Failed to load tournaments:', err)
         }
       } catch (err: any) {
         setError(err.message || 'Failed to load league data')
@@ -86,14 +116,14 @@ export default function LeagueDashboard() {
         setLoading(false)
       }
     }
-    fetchData()
+    loadData()
   }, [id])
 
   const isCommish = league ? user?.id === league.commissioner_id : false
 
   // Load draft order and settings when opening the settings tab
   useEffect(() => {
-    if (activeTab === 'settings' && league) {
+    if (activeTab === 'settings' && league && selectedTournamentId) {
       async function prepareSettings() {
         try {
           let currentTeams = teams;
@@ -106,13 +136,17 @@ export default function LeagueDashboard() {
           currentTeams.forEach(t => names[t.id] = t.team_name)
           setEditTeamNames(names)
           
-          const draft = await draftService.getDraftByLeague(league!.id)
+          const draft = await draftService.getDraftByTournament(league!.id, selectedTournamentId)
           if (draft && draft.draft_order && draft.draft_order.length > 0) {
+            setCurrentDraftId(draft.id)
+            setIsDraftLocked(!!draft.is_locked)
             const teamIds = currentTeams.map(t => t.id)
             const filteredOrder = draft.draft_order.filter((tid: string) => teamIds.includes(tid))
             const missingIds = teamIds.filter(tid => !filteredOrder.includes(tid))
             setEditDraftOrder([...filteredOrder, ...missingIds])
           } else {
+            setCurrentDraftId(null)
+            setIsDraftLocked(false)
             setEditDraftOrder(currentTeams.map(t => t.id))
           }
         } catch (err) {
@@ -121,7 +155,7 @@ export default function LeagueDashboard() {
       }
       prepareSettings()
     }
-  }, [activeTab, league, isCommish, teams])
+  }, [activeTab, league, isCommish, teams, selectedTournamentId])
 
   if (loading) return <div className="text-surface-400">Loading league...</div>
   if (error || !league) return <div className="text-red-500">{error || 'League not found'}</div>
@@ -181,7 +215,7 @@ export default function LeagueDashboard() {
       const finalOrder = editDraftOrder.filter(tid => validTeamIds.includes(tid));
       // if any new teams were created on a subsequent fetch, ensure they are in the order
       const missingIds = validTeamIds.filter(tid => !finalOrder.includes(tid));
-      await draftService.updateDraftOrder(league!.id, [...finalOrder, ...missingIds])
+      await draftService.updateDraftOrder(league!.id, [...finalOrder, ...missingIds], selectedTournamentId)
 
       // 5. Refresh data
       const [t, m] = await Promise.all([
@@ -237,6 +271,73 @@ export default function LeagueDashboard() {
       setLoading(false)
     }
   }
+
+  const handleDeleteLeague = async () => {
+    if (!league) return
+    
+    const confirmName = prompt(`⚠️ WARNING: This will permanently delete the league "${league.name}", all teams, rosters, and draft data. This action CANNOT be undone.\n\nPlease type the league name to confirm:`)
+    
+    if (confirmName !== league.name) {
+      if (confirmName !== null) alert("Confirmation failed. League name did not match.")
+      return
+    }
+
+    try {
+      setLoading(true)
+      await leagueService.deleteLeague(league.id)
+      navigate('/')
+    } catch (err: any) {
+      alert("Failed to delete league: " + err.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const startRandomizing = () => {
+    setIsRandomizing(true);
+    setRandomizedOrder([]);
+    setRemainingTeams(teams.map(t => t.id));
+    setWheelItems(teams.map(t => editTeamNames[t.id] || t.team_name));
+  };
+
+  const spinWheel = () => {
+    if (wheelSpinning || remainingTeams.length === 0) return;
+    setWheelSpinning(true);
+  };
+
+  const onWheelPick = (pickedTeamName: string) => {
+    setWheelSpinning(false);
+    
+    // Find the team ID by name
+    const pickedTeamId = teams.find(t => (editTeamNames[t.id] || t.team_name) === pickedTeamName)?.id;
+    if (!pickedTeamId) return;
+
+    const newRandomizedOrder = [...randomizedOrder, pickedTeamId];
+    setRandomizedOrder(newRandomizedOrder);
+    
+    const newRemaining = remainingTeams.filter(id => id !== pickedTeamId);
+    setRemainingTeams(newRemaining);
+    
+    // Update wheel items for next spin
+    setWheelItems(newRemaining.map(id => editTeamNames[id] || teams.find(t => t.id === id)?.team_name || ''));
+  };
+
+  const handleSetRandomizedOrder = () => {
+    if (randomizedOrder.length !== teams.length) return;
+    setEditDraftOrder(randomizedOrder);
+    setIsRandomizing(false);
+  };
+
+  const handleToggleDraftLock = async () => {
+    if (!currentDraftId) return;
+    try {
+      const newLocked = !isDraftLocked;
+      await draftService.lockDraftOrder(currentDraftId, newLocked);
+      setIsDraftLocked(newLocked);
+    } catch (err: any) {
+      alert('Failed to update draft lock: ' + err.message);
+    }
+  };
 
   const tabs: { id: TabId; label: string; icon: string }[] = [
     { id: 'league', label: 'League', icon: '🏆' },
@@ -711,46 +812,155 @@ export default function LeagueDashboard() {
                    )}
 
                    {settingsTab === 'draft' && (
-                    <div className="space-y-4 max-w-xl">
-                      <h3 className="text-sm font-black text-surface-500 uppercase tracking-widest mb-4">Draft Order</h3>
-                      <div className="space-y-2 max-h-[400px] overflow-y-auto pr-2 no-scrollbar">
-                         {editDraftOrder.map((teamId, index) => {
-                           const team = teams.find(t => t.id === teamId)
-                           if (!team) return null
-                           return (
-                             <div key={`draft-${teamId}`} className="flex items-center gap-3 p-3 bg-surface-900/50 border border-surface-700/50 rounded-xl group transition-all hover:border-primary-500/30">
-                                <div className="w-8 h-8 rounded-lg bg-surface-800 border border-surface-700 flex items-center justify-center text-xs font-black text-surface-500 group-hover:text-primary-400 transition-colors">
-                                  {index + 1}
-                                </div>
-                                <div className="flex-1">
-                                  <div className={`text-sm font-bold ${team.user_id ? 'text-surface-100' : 'text-surface-400 italic'}`}>
-                                    {editTeamNames[teamId] || team.team_name}
-                                  </div>
-                                </div>
-                                {isCommish && (
-                                  <div className="flex items-center gap-2">
-                                    <div className="flex flex-col gap-1">
-                                      <button 
-                                        onClick={() => moveItem(index, 'up')}
-                                        disabled={index === 0}
-                                        className="w-8 h-6 bg-surface-800 rounded border border-surface-700 flex items-center justify-center text-xs hover:text-primary-400 disabled:opacity-20"
-                                      >
-                                        ▲
-                                      </button>
-                                      <button 
-                                        onClick={() => moveItem(index, 'down')}
-                                        disabled={index === editDraftOrder.length - 1}
-                                        className="w-8 h-6 bg-surface-800 rounded border border-surface-700 flex items-center justify-center text-xs hover:text-primary-400 disabled:opacity-20"
-                                      >
-                                        ▼
-                                      </button>
-                                    </div>
-                                  </div>
-                                )}
-                             </div>
-                           )
-                         })}
+                    <div className="space-y-6">
+                      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-4 bg-surface-900/40 border border-surface-700/50 rounded-2xl">
+                        <div className="flex-1">
+                          <label className="block text-surface-400 text-[10px] font-bold uppercase tracking-widest mb-1.5">Selected Tournament</label>
+                          <select 
+                            value={selectedTournamentId}
+                            onChange={(e) => setSelectedTournamentId(e.target.value)}
+                            className="w-full bg-surface-800 border border-surface-700 rounded-xl px-4 py-2.5 text-sm text-surface-100 font-bold outline-none cursor-pointer focus:ring-2 focus:ring-primary-500/30 transition-all"
+                          >
+                            {tournaments
+                              .filter(t => !(league?.excluded_tournaments || []).includes(t.id))
+                              .map(t => (
+                                <option key={t.id} value={t.id}>
+                                  {t.name} ({new Date(t.start_date).getFullYear()})
+                                </option>
+                              ))}
+                          </select>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          {isCommish && currentDraftId && (
+                            <button
+                              onClick={handleToggleDraftLock}
+                              className={`px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all border ${
+                                isDraftLocked
+                                  ? 'bg-amber-500/10 text-amber-500 border-amber-500/30 hover:bg-amber-500 hover:text-surface-900'
+                                  : 'bg-green-500/10 text-green-500 border-green-500/30 hover:bg-green-500 hover:text-surface-900'
+                              }`}
+                            >
+                              {isDraftLocked ? '🔓 Unlock Draft Order' : '🔒 Lock Draft Order'}
+                            </button>
+                          )}
+                          {isCommish && !isRandomizing && !isDraftLocked && (
+                            <button 
+                              onClick={startRandomizing}
+                              className="bg-primary-600/10 hover:bg-primary-600 text-primary-400 hover:text-surface-900 border border-primary-500/30 px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all"
+                            >
+                              🎡 Randomize via Wheel
+                            </button>
+                          )}
+                        </div>
                       </div>
+
+                      {isRandomizing ? (
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 animate-fade-in">
+                          <div className="flex flex-col items-center justify-center p-8 bg-surface-900/20 border-2 border-dashed border-surface-700/50 rounded-3xl h-full min-h-[450px]">
+                            <SpinningWheel 
+                              items={wheelItems} 
+                              onPick={onWheelPick} 
+                              isSpinning={wheelSpinning} 
+                            />
+                            <div className="mt-8 text-center">
+                              <button
+                                onClick={spinWheel}
+                                disabled={wheelSpinning || remainingTeams.length === 0}
+                                className="bg-primary-600 hover:bg-primary-500 text-surface-900 font-black px-10 py-4 rounded-2xl transition-all shadow-glow/20 uppercase tracking-widest disabled:opacity-50 disabled:scale-95"
+                              >
+                                {wheelSpinning ? 'SPINNING...' : remainingTeams.length === 0 ? 'DRAFT ORDER COMPLETE' : 'SPIN THE WHEEL!'}
+                              </button>
+                              <p className="mt-4 text-xs font-bold text-surface-500 uppercase tracking-widest">
+                                {remainingTeams.length} Teams remaining in wheel
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="space-y-4">
+                            <div className="flex items-center justify-between">
+                              <h4 className="text-sm font-black text-surface-400 uppercase tracking-widest">Randomized Order</h4>
+                              {randomizedOrder.length === teams.length && (
+                                 <button 
+                                  onClick={handleSetRandomizedOrder}
+                                  className="text-[10px] bg-green-500/10 text-green-400 border border-green-500/30 px-3 py-1.5 rounded-lg font-black uppercase tracking-widest hover:bg-green-500 hover:text-white transition-all shadow-glow/10"
+                                 >
+                                   ✓ Set Draft Order
+                                 </button>
+                              )}
+                            </div>
+                            <div className="space-y-2 max-h-[400px] overflow-y-auto no-scrollbar pr-2">
+                              {randomizedOrder.map((teamId, index) => (
+                                <div key={`random-${teamId}`} className="flex items-center gap-3 p-3 bg-primary-600/5 border border-primary-500/20 rounded-xl animate-scale-in">
+                                  <div className="w-8 h-8 rounded-lg bg-primary-600 text-surface-900 flex items-center justify-center text-xs font-black">
+                                    {index + 1}
+                                  </div>
+                                  <div className="font-bold text-sm text-surface-100">
+                                    {editTeamNames[teamId] || teams.find(t => t.id === teamId)?.team_name}
+                                  </div>
+                                </div>
+                              ))}
+                              {Array.from({ length: teams.length - randomizedOrder.length }).map((_, i) => (
+                                <div key={`empty-${i}`} className="flex items-center gap-3 p-3 bg-surface-900/50 border border-surface-700/20 rounded-xl opacity-30">
+                                  <div className="w-8 h-8 rounded-lg bg-surface-800 text-surface-500 flex items-center justify-center text-xs font-black">
+                                    {randomizedOrder.length + i + 1}
+                                  </div>
+                                  <div className="font-bold text-sm text-surface-600 italic">Waiting for spin...</div>
+                                </div>
+                              ))}
+                            </div>
+                            <button 
+                              onClick={() => { setIsRandomizing(false); setEditDraftOrder([...editDraftOrder]); }}
+                              className="w-full text-[10px] text-surface-500 hover:text-red-400 font-black uppercase tracking-widest transition-colors py-2"
+                            >
+                              ✕ Cancel Randomization
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="space-y-4 max-w-xl">
+                          <h3 className="text-[10px] font-black text-surface-500 uppercase tracking-widest mb-2 flex items-center gap-2">
+                            <span>📋</span> Current Draft Order for {tournaments.find(tourney => tourney.id === selectedTournamentId)?.name}
+                          </h3>
+                          <div className="space-y-2 max-h-[400px] overflow-y-auto pr-2 no-scrollbar">
+                            {editDraftOrder.map((teamId, index) => {
+                              const team = teams.find(t => t.id === teamId)
+                              if (!team) return null
+                              return (
+                                <div key={`draft-${teamId}`} className="flex items-center gap-3 p-3 bg-surface-900/50 border border-surface-700/50 rounded-xl group transition-all hover:border-primary-500/30">
+                                    <div className="w-8 h-8 rounded-lg bg-surface-800 border border-surface-700 flex items-center justify-center text-xs font-black text-surface-500 group-hover:text-primary-400 transition-colors">
+                                      {index + 1}
+                                    </div>
+                                    <div className="flex-1">
+                                      <div className={`text-sm font-bold ${team.user_id ? 'text-surface-100' : 'text-surface-400 italic'}`}>
+                                        {editTeamNames[teamId] || team.team_name}
+                                      </div>
+                                    </div>
+                                    {isCommish && (
+                                      <div className="flex items-center gap-2">
+                                        <div className="flex flex-col gap-1">
+                                          <button 
+                                            onClick={() => moveItem(index, 'up')}
+                                            disabled={index === 0 || isDraftLocked}
+                                            className="w-8 h-6 bg-surface-800 rounded border border-surface-700 flex items-center justify-center text-xs hover:text-primary-400 disabled:opacity-20"
+                                          >
+                                            ▲
+                                          </button>
+                                          <button 
+                                            onClick={() => moveItem(index, 'down')}
+                                            disabled={index === editDraftOrder.length - 1 || isDraftLocked}
+                                            className="w-8 h-6 bg-surface-800 rounded border border-surface-700 flex items-center justify-center text-xs hover:text-primary-400 disabled:opacity-20"
+                                          >
+                                            ▼
+                                          </button>
+                                        </div>
+                                      </div>
+                                    )}
+                                </div>
+                              )
+                            })}
+                          </div>
+                   </div>
+                      )}
                     </div>
                    )}
 
@@ -786,13 +996,43 @@ export default function LeagueDashboard() {
                                          if (confirm(`Remove the owner from this team? It will become an orphaned team.`)) {
                                            await leagueService.removeTeamOwner(teamId);
                                            // Refresh local teams
-                                           setTeams(teams.map(t => t.id === teamId ? {...t, user_id: ''} : t));
+                                           const updatedTeams = await leagueService.getLeagueTeams(league!.id);
+                                           setTeams(updatedTeams);
                                          }
                                        }}
                                        className="text-[9px] uppercase tracking-widest bg-orange-500/10 text-orange-500 px-1.5 py-0.5 rounded hover:bg-orange-500 hover:text-white transition-colors"
                                      >
                                        Remove Owner
                                      </button>
+                                   )}
+                                   {isCommish && !team.user_id && (
+                                     <div className="flex items-center gap-2">
+                                       <select 
+                                         className="bg-surface-800 border border-surface-700 text-[10px] text-surface-200 rounded px-1 py-0.5 outline-none focus:border-primary-500"
+                                         onChange={async (e) => {
+                                           const userId = e.target.value;
+                                           if (!userId) return;
+                                           try {
+                                             await leagueService.assignTeamOwner(teamId, userId);
+                                             const updatedTeams = await leagueService.getLeagueTeams(league!.id);
+                                             setTeams(updatedTeams);
+                                           } catch (err: any) {
+                                             alert('Failed to assign owner: ' + err.message);
+                                           }
+                                         }}
+                                         value=""
+                                       >
+                                         <option value="">Assign Member...</option>
+                                         {members
+                                           .filter(m => !teams.some(t => t.user_id === m.user_id))
+                                           .map(m => (
+                                             <option key={m.user_id} value={m.user_id}>
+                                               {m.profiles?.display_name || 'Unknown User'}
+                                             </option>
+                                           ))
+                                         }
+                                       </select>
+                                     </div>
                                    )}
                                 </div>
                               </div>
@@ -816,12 +1056,18 @@ export default function LeagueDashboard() {
                  </div>
 
                  {isCommish && (
-                   <div className="flex gap-4 pt-8 border-t border-surface-700/50">
+                   <div className="flex flex-col md:flex-row gap-4 pt-8 border-t border-surface-700/50">
                      <button 
                       onClick={handleSaveSettings} 
-                      className="flex-1 bg-primary-600 hover:bg-primary-500 text-surface-900 font-black py-4 rounded-xl transition-all shadow-glow/20 uppercase tracking-wider"
+                      className="flex-[2] bg-primary-600 hover:bg-primary-500 text-surface-900 font-black py-4 rounded-xl transition-all shadow-glow/20 uppercase tracking-wider"
                      >
                        🚀 Save All Changes
+                     </button>
+                     <button 
+                      onClick={handleDeleteLeague} 
+                      className="flex-1 bg-red-500/10 hover:bg-red-500 text-red-500 hover:text-white border border-red-500/20 font-bold py-4 rounded-xl transition-all uppercase tracking-wider"
+                     >
+                       🗑️ Delete League
                      </button>
                    </div>
                  )}

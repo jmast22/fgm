@@ -6,15 +6,15 @@ DECLARE
     v_new_round INT;
     v_new_pick INT;
     v_roster_size INT;
+    v_tournament_id UUID;
 BEGIN
-    -- Get league details for the draft to calculate boundaries
-    SELECT l.roster_size, COALESCE((SELECT COUNT(*) FROM public.teams WHERE league_id = l.id), 0)
-    INTO v_roster_size, v_total_teams
+    -- Get league details and tournament_id for the draft
+    SELECT l.roster_size, COALESCE((SELECT COUNT(*) FROM public.teams WHERE league_id = l.id), 0), d.tournament_id
+    INTO v_roster_size, v_total_teams, v_tournament_id
     FROM public.drafts d
     JOIN public.leagues l ON d.league_id = l.id
     WHERE d.id = NEW.draft_id;
 
-    -- Default to 1 if not found to avoid division by zero
     IF v_total_teams = 0 THEN
         v_total_teams := 1;
     END IF;
@@ -23,7 +23,6 @@ BEGIN
     v_new_pick := NEW.pick_number + 1;
     v_new_round := NEW.round;
     
-    -- If we completed a round
     IF v_total_teams > 0 AND NEW.pick_number % v_total_teams = 0 THEN
         v_new_round := NEW.round + 1;
     END IF;
@@ -34,26 +33,25 @@ BEGIN
         SET status = 'completed', updated_at = NOW() 
         WHERE id = NEW.draft_id;
         
-        -- Also update league
         UPDATE public.leagues 
         SET draft_status = 'completed' 
         WHERE id = (SELECT league_id FROM public.drafts WHERE id = NEW.draft_id);
     ELSE
-        -- Advance pick
         UPDATE public.drafts 
         SET current_round = v_new_round, current_pick = v_new_pick, updated_at = NOW() 
         WHERE id = NEW.draft_id;
     END IF;
 
-    -- Also auto-add to roster
-    INSERT INTO public.team_rosters (team_id, golfer_id, acquired_via)
-    VALUES (NEW.team_id, NEW.golfer_id, 'draft')
-    ON CONFLICT (team_id, golfer_id) DO NOTHING;
+    -- Auto-add to roster WITH tournament_id from the draft
+    INSERT INTO public.team_rosters (team_id, golfer_id, acquired_via, tournament_id)
+    VALUES (NEW.team_id, NEW.golfer_id, 'draft', v_tournament_id)
+    ON CONFLICT (team_id, golfer_id) DO UPDATE SET tournament_id = v_tournament_id;
 
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
-CREATE OR REPLACE TRIGGER on_draft_pick_made
+DROP TRIGGER IF EXISTS on_draft_pick_made ON public.draft_picks;
+CREATE TRIGGER on_draft_pick_made
   AFTER INSERT ON public.draft_picks
   FOR EACH ROW EXECUTE PROCEDURE public.advance_draft_pick_fn();
