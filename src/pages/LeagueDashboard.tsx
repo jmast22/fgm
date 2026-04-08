@@ -201,7 +201,7 @@ export default function LeagueDashboard() {
     }
   }
 
-  const handleSaveTeamNames = async () => {
+  const _handleSaveTeamNames = async () => {
     try {
       setSaveLoading(true)
       const currentTeams = await leagueService.getLeagueTeams(league!.id);
