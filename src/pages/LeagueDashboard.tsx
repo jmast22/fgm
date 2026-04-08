@@ -375,31 +375,10 @@ export default function LeagueDashboard() {
               </p>
             </div>
           </div>
-          
-          {isCommish && (
-            <div className="bg-surface-900/50 border border-surface-700/50 rounded-xl p-3 flex items-center gap-4">
-              <div>
-                <div className="text-[9px] text-surface-500 uppercase tracking-widest font-black mb-0.5">Invite Code</div>
-                <div className="font-mono text-lg font-black text-primary-400">
-                  {league.invite_code}
-                </div>
-              </div>
-              <button 
-                className="w-10 h-10 rounded-lg bg-surface-800 border border-surface-700 flex items-center justify-center text-surface-400 hover:text-primary-400 hover:border-primary-500/50 transition-all active:scale-95"
-                onClick={() => {
-                  navigator.clipboard.writeText(league.invite_code)
-                  // Could add a toast here
-                }}
-                title="Copy to clipboard"
-              >
-                📋
-              </button>
-            </div>
-          )}
         </div>
 
         {/* Sub-Navigation Bar */}
-        <div className="mt-4 flex items-center gap-1 p-1 bg-surface-900/50 border border-surface-700/50 rounded-xl overflow-x-auto no-scrollbar">
+        <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2 p-2 bg-surface-900/50 border border-surface-700/50 rounded-xl">
           {tabs.map((tab) => {
             const isActive = activeTab === tab.id
             return (
@@ -407,7 +386,7 @@ export default function LeagueDashboard() {
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
                 className={`
-                  flex items-center gap-2 px-6 py-2.5 rounded-lg text-sm font-bold transition-all duration-200 whitespace-nowrap
+                  flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg text-sm font-bold transition-all duration-200 whitespace-nowrap
                   ${isActive 
                     ? 'bg-primary-600 text-surface-900 shadow-glow/10' 
                     : 'text-surface-400 hover:text-surface-100 hover:bg-surface-800'
@@ -632,8 +611,32 @@ export default function LeagueDashboard() {
                  
                  <div className="min-h-[300px]">
                    {settingsTab === 'core' && (
-                     <div className="space-y-4 max-w-xl">
-                      <h3 className="text-sm font-black text-surface-500 uppercase tracking-widest mb-4">Core Info</h3>
+                     <div className="space-y-6 max-w-xl">
+                      <div className="flex items-center justify-between">
+                        <h3 className="text-sm font-black text-surface-500 uppercase tracking-widest">Core Info</h3>
+                        
+                        {isCommish && (
+                          <div className="bg-surface-900/50 border border-surface-700/50 rounded-xl p-3 flex items-center gap-4">
+                            <div>
+                              <div className="text-[9px] text-surface-500 uppercase tracking-widest font-black mb-0.5">Invite Code</div>
+                              <div className="font-mono text-lg font-black text-primary-400">
+                                {league.invite_code}
+                              </div>
+                            </div>
+                            <button 
+                              className="w-10 h-10 rounded-lg bg-surface-800 border border-surface-700 flex items-center justify-center text-surface-400 hover:text-primary-400 hover:border-primary-500/50 transition-all active:scale-95"
+                              onClick={() => {
+                                navigator.clipboard.writeText(league.invite_code)
+                                alert('Invite code copied to clipboard!')
+                              }}
+                              title="Copy to clipboard"
+                            >
+                              📋
+                            </button>
+                          </div>
+                        )}
+                      </div>
+
                       <div className="space-y-4">
                         <div>
                         <label className="block text-surface-400 text-xs font-bold uppercase tracking-wider mb-2">League Name</label>
