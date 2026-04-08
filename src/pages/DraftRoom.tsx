@@ -6,6 +6,7 @@ import type { Draft, DraftPick } from '../services/draftService'
 import { leagueService } from '../services/leagueService'
 import type { League, Team } from '../services/leagueService'
 import { supabase } from '../lib/supabase'
+import { RealtimeChannel } from '@supabase/supabase-js'
 
 export default function DraftRoom() {
   const { leagueId } = useParams<{ leagueId: string }>()
@@ -26,6 +27,10 @@ export default function DraftRoom() {
   const [showSuccessModal, setShowSuccessModal] = useState(false)
   const [countdown, setCountdown] = useState(10)
   const [isViewingHistory, setIsViewingHistory] = useState(false)
+  const [showAdminMenu, setShowAdminMenu] = useState(false)
+  const [onlineUserIds, setOnlineUserIds] = useState<Set<string>>(new Set())
+  const [isJoined, setIsJoined] = useState(false)
+  const [presenceChannel, setPresenceChannel] = useState<RealtimeChannel | null>(null)
 
   useEffect(() => {
     if (!leagueId) return
@@ -140,6 +145,35 @@ export default function DraftRoom() {
     return () => clearTimeout(timer)
   }, [showSuccessModal, countdown, navigate, leagueId])
 
+  useEffect(() => {
+    if (!draft?.id) return;
+
+    const channel = supabase.channel(`draft_presence:${draft.id}`, {
+      config: {
+        presence: {
+          key: user?.id || 'anonymous',
+        },
+      },
+    });
+
+    channel
+      .on('presence', { event: 'sync' }, () => {
+        const state = channel.presenceState();
+        const connectedIds = new Set<string>();
+        Object.keys(state).forEach((key) => {
+          if (key !== 'anonymous') connectedIds.add(key);
+        });
+        setOnlineUserIds(connectedIds);
+      })
+      .subscribe();
+
+    setPresenceChannel(channel);
+
+    return () => {
+      channel.unsubscribe();
+    };
+  }, [draft?.id, user?.id]);
+
   const filteredGolfers = useMemo(() => {
     const normalize = (str: string) => 
       str.normalize('NFD').replace(/[\u0300-\u036f]/g, "").toLowerCase();
@@ -213,6 +247,71 @@ export default function DraftRoom() {
     }
   }
 
+  const handleToggleDraftLock = async () => {
+    if (!draft) return;
+    try {
+      const newLocked = !draft.is_locked;
+      await draftService.lockDraftOrder(draft.id, newLocked);
+      setDraft({ ...draft, is_locked: newLocked });
+    } catch (err: any) {
+      alert('Failed to update draft lock: ' + err.message);
+    }
+  };
+
+  const handleToggleDraftStatus = async () => {
+    if (!draft) return;
+    try {
+      if (draft.status === 'pending') {
+        // If picks exist, it's a resume. If no picks, it's a fresh start.
+        if (picks.length > 0) {
+          await draftService.resumeDraft(draft.id);
+        } else {
+          await draftService.startDraft(leagueId!);
+        }
+      } else if (draft.status === 'active') {
+        await draftService.pauseDraft(draft.id);
+      }
+      const updated = await draftService.getDraftByLeague(leagueId!);
+      if (updated) setDraft(updated);
+    } catch (err: any) {
+      alert('Failed to toggle draft status: ' + err.message);
+    }
+  };
+
+  const handleResetDraft = async () => {
+    if (!confirm('Are you sure you want to RESET the entire draft? This will delete the draft record and revert to "Draft Order Not Set".')) return;
+    try {
+      await draftService.resetDraft(leagueId!);
+      navigate(`/leagues/${leagueId}`);
+    } catch (err: any) {
+      alert('Failed to reset draft: ' + err.message);
+    }
+  };
+
+  const handleClearDraft = async () => {
+    if (!confirm('Are you sure you want to CLEAR all picks? This will erase every selection but keep the draft order.')) return;
+    try {
+      if (!draft) return;
+      await draftService.clearDraftPicks(draft.id);
+      setPicks([]);
+      const updated = await draftService.getDraftByLeague(leagueId!);
+      if (updated) setDraft(updated);
+      setShowAdminMenu(false);
+    } catch (err: any) {
+      alert('Failed to clear picks: ' + err.message);
+    }
+  };
+
+  const handleJoinDraft = async () => {
+    if (!presenceChannel || !user) return;
+    
+    await presenceChannel.track({
+      user_id: user.id,
+      joined_at: new Date().toISOString(),
+    });
+    setIsJoined(true);
+  };
+
   const renderDraftBoard = () => {
     if (!draft || !league) return null;
 
@@ -228,13 +327,18 @@ export default function DraftRoom() {
           <div className="flex border-b border-surface-700 bg-surface-900/50 sticky top-0 z-10 w-full">
             {teamOrder.map((teamId, index) => {
               const team = teams.find(t => t.id === teamId);
+              const isOnline = team?.user_id && onlineUserIds.has(team.user_id);
+              
               return (
-                <div key={teamId} className="flex-1 min-w-[120px] p-4 text-center border-r border-surface-700 last:border-r-0">
-                  <div className="w-10 h-10 bg-surface-700 rounded-full mx-auto mb-2 flex items-center justify-center text-lg font-bold text-surface-300 border-2 border-surface-600">
+                <div key={teamId} className={`flex-1 min-w-[120px] p-4 text-center border-r border-surface-700 last:border-r-0 transition-all ${isOnline ? 'bg-primary-500/10' : 'opacity-40 grayscale'}`}>
+                  <div className={`w-10 h-10 rounded-full mx-auto mb-2 flex items-center justify-center text-lg font-bold border-2 transition-all ${isOnline ? 'bg-primary-500/10 border-primary-500 text-primary-400' : 'bg-surface-700 border-surface-600 text-surface-300'}`}>
                     {team?.team_name?.charAt(0) || '?'}
                   </div>
-                  <div className="text-xs font-bold text-surface-100 truncate px-1">{team?.team_name}</div>
-                  <div className="text-[9px] text-surface-400 uppercase tracking-tighter mt-0.5 font-mono">Slot {index + 1}</div>
+                  <div className={`text-xs font-bold truncate px-1 transition-colors ${isOnline ? 'text-primary-400' : 'text-surface-100'}`}>{team?.team_name}</div>
+                  <div className="flex items-center justify-center gap-1 mt-0.5">
+                    <div className={`w-1 h-1 rounded-full ${isOnline ? 'bg-primary-500 animate-pulse' : 'bg-surface-600'}`}></div>
+                    <div className="text-[8px] text-surface-400 uppercase tracking-tighter font-mono">{isOnline ? 'Joined' : 'Slot ' + (index + 1)}</div>
+                  </div>
                 </div>
               );
             })}
@@ -329,58 +433,111 @@ export default function DraftRoom() {
         </div>
 
         {isCommish && (
-          <div className="flex items-center gap-2 bg-surface-900 px-3 py-1.5 rounded-lg border border-surface-700">
-             <span className="text-[10px] uppercase tracking-widest font-black text-primary-500/80 mr-1">Admin</span>
-             <button 
-               onClick={async () => {
-                 if (confirm('Are you sure you want to reset the entire draft? This will delete ALL picks and placeholder teams.')) {
-                   await draftService.resetDraft(leagueId!)
-                   navigate(`/leagues/${leagueId}`)
-                 }
-               }}
-               className="p-1.5 hover:bg-surface-800 rounded text-surface-400 hover:text-red-400 transition-colors"
-               title="Reset Draft"
-             >
-                <span className="text-sm">🔄</span>
-             </button>
-             <button 
-               onClick={async () => {
-                 if (draft.status === 'paused') {
-                    await draftService.resumeDraft(draft.id)
-                 } else {
-                    await draftService.pauseDraft(draft.id)
-                 }
-               }}
-               className="p-1.5 hover:bg-surface-800 rounded text-surface-400 hover:text-primary-400 transition-colors"
-               title={draft.status === 'paused' ? 'Resume Draft' : 'Pause Draft'}
-             >
-                <span className="text-sm">{draft.status === 'paused' ? '▶️' : '⏸️'}</span>
-             </button>
-             <button 
-               onClick={async () => {
-                 if (confirm('Undo the last pick?')) {
-                    await draftService.undoLastPick(draft.id)
-                    // Reload picks manually for immediate feedback
-                    const updatedPicks = await draftService.getDraftPicks(draft.id)
-                    setPicks(updatedPicks)
-                 }
-               }}
-               className="p-1.5 hover:bg-surface-800 rounded text-surface-400 hover:text-orange-400 transition-colors"
-               title="Undo Last Pick"
-             >
-                <span className="text-sm">↩️</span>
-             </button>
+          <div className="flex items-center gap-3">
+             {draft.status !== 'completed' && (
+               <button
+                 onClick={handleToggleDraftStatus}
+                 className={`px-6 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all border shadow-lg ${
+                   draft.status === 'active'
+                     ? 'bg-amber-500/10 text-amber-500 border-amber-500/30 hover:bg-amber-500 hover:text-white'
+                     : 'bg-primary-600 text-surface-900 border-primary-500 shadow-glow/20'
+                 }`}
+               >
+                 {draft.status === 'pending' 
+                   ? (picks.length > 0 ? '▶ Resume Draft' : '▶ Start Draft') 
+                   : '⏸ Pause Draft'}
+               </button>
+             )}
+
+             <div className="relative">
+                <button 
+                  onClick={() => setShowAdminMenu(!showAdminMenu)}
+                  className={`p-2.5 rounded-xl border transition-all ${
+                    showAdminMenu 
+                      ? 'bg-surface-700 text-white border-surface-600' 
+                      : 'bg-surface-900 text-surface-400 border-surface-700 hover:border-primary-500/30 hover:text-primary-400'
+                  }`}
+                  title="Draft Settings"
+                >
+                  <span className="text-lg">⚙️</span>
+                </button>
+
+                {showAdminMenu && (
+                  <div className="absolute right-0 mt-2 w-56 bg-surface-900 border border-surface-700 rounded-2xl shadow-2xl z-50 overflow-hidden animate-scale-in">
+                      <div className="p-3 border-b border-surface-700 bg-surface-800/30">
+                        <h4 className="text-[10px] font-black text-surface-500 uppercase tracking-widest">Draft Admin</h4>
+                      </div>
+                      <div className="p-2 space-y-1">
+                        <button
+                          onClick={handleToggleDraftLock}
+                          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-surface-800 text-left transition-all"
+                        >
+                          <span className="text-sm">{draft.is_locked ? '🔓' : '🔒'}</span>
+                          <div className="flex-1">
+                            <div className="text-xs font-bold text-surface-100">{draft.is_locked ? 'Unlock Board' : 'Lock Board'}</div>
+                            <div className="text-[9px] text-surface-500 uppercase">Prevent pick editing</div>
+                          </div>
+                        </button>
+                        <button
+                          onClick={async () => {
+                            if (confirm('Undo the last pick?')) {
+                              await draftService.undoLastPick(draft.id)
+                              // Data will refresh via Realtime
+                            }
+                          }}
+                          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-orange-500/10 text-left transition-all group"
+                        >
+                          <span className="text-sm">↩️</span>
+                          <div className="flex-1">
+                            <div className="text-xs font-bold text-surface-100 group-hover:text-orange-400">Undo Last Pick</div>
+                            <div className="text-[9px] text-surface-500 uppercase">Revert pick state</div>
+                          </div>
+                        </button>
+                        <button
+                          onClick={handleClearDraft}
+                          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-red-500/10 text-left transition-all group"
+                        >
+                          <span className="text-sm">🧹</span>
+                          <div className="flex-1">
+                            <div className="text-xs font-bold text-surface-100 group-hover:text-red-400">Clear All Picks</div>
+                            <div className="text-[9px] text-surface-500 uppercase">Wipe picks, keep order</div>
+                          </div>
+                        </button>
+                        <button
+                          onClick={handleResetDraft}
+                          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-red-500/10 text-left transition-all group"
+                        >
+                          <span className="text-sm">♻️</span>
+                          <div className="flex-1">
+                            <div className="text-xs font-bold text-surface-100 group-hover:text-red-400">Reset Entire Draft</div>
+                            <div className="text-[9px] text-surface-500 uppercase">Delete draft record</div>
+                          </div>
+                        </button>
+                      </div>
+                  </div>
+                )}
+             </div>
           </div>
         )}
 
         {!isDraftComplete && (
-          <div className="bg-surface-900 border border-surface-700 rounded-lg p-3 flex items-center gap-4">
-            <div>
-              <div className="text-xs text-surface-400 uppercase tracking-wider font-semibold">
-                {draft.status === 'paused' ? 'DRAFT PAUSED' : 'On the Clock'}
-              </div>
-              <div className={`font-bold text-lg ${isMyTurn && draft.status === 'active' ? 'text-primary-400 animate-pulse' : 'text-surface-100'}`}>
-                {draft.status === 'paused' ? '---' : (currentTeam?.team_name || 'Loading...')}
+          <div className="flex items-center gap-3">
+            {draft && !isJoined && teams.some(t => t.user_id === user?.id) && (
+              <button
+                onClick={handleJoinDraft}
+                className="px-6 py-2 bg-primary-600 hover:bg-primary-500 text-surface-900 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all shadow-glow/20"
+              >
+                Join Draft
+              </button>
+            )}
+            <div className="bg-surface-900 border border-surface-700 rounded-lg p-3 flex items-center gap-4">
+              <div>
+                <div className="text-xs text-surface-400 uppercase tracking-wider font-semibold">
+                  {draft.status === 'pending' && picks.length > 0 ? 'DRAFT PAUSED' : draft.status === 'pending' ? 'DRAFT PENDING' : 'On the Clock'}
+                </div>
+                <div className={`font-bold text-lg ${isMyTurn && draft.status === 'active' ? 'text-primary-400 animate-pulse' : 'text-surface-100'}`}>
+                  {draft.status === 'pending' ? '---' : (currentTeam?.team_name || 'Loading...')}
+                </div>
               </div>
             </div>
           </div>
@@ -414,35 +571,48 @@ export default function DraftRoom() {
                 className="w-full bg-surface-900 border border-surface-700 rounded-lg py-2 px-3 text-surface-50 focus:outline-none focus:ring-2 focus:ring-primary-500"
               />
             </div>
-            <div className="flex-1 overflow-y-auto p-4 space-y-3">
-              {filteredGolfers.slice(0, 100).map(golfer => (
-                <div key={golfer.id} className="bg-surface-800 border border-surface-700 rounded-lg p-3 flex items-center justify-between hover:border-surface-600 transition-colors">
-                    <div>
-                      <div className="font-bold text-surface-50">{golfer.name}</div>
-                      <div className="text-xs text-surface-400 flex items-center gap-2">
-                        <span>Age: {golfer.age}</span>
-                        <span className="w-1 h-1 rounded-full bg-surface-600"></span>
-                        <span className="text-primary-400 font-semibold">
-                          OWGR: {(golfer.owg_rank !== undefined && golfer.owg_rank !== null && golfer.owg_rank !== 9999) ? `#${golfer.owg_rank}` : 'N/A'}
-                        </span>
-                      </div>
-                    </div>
-                  <button 
-                    disabled={!canDraft || isPickProcessing}
-                    onClick={() => handleDraftPlayer(golfer.id)}
-                    className={`px-4 py-1.5 rounded font-medium text-sm transition-colors ${
-                      canDraft && !isPickProcessing
-                        ? 'bg-primary-600 hover:bg-primary-500 text-surface-900' 
-                        : 'bg-surface-700 text-surface-400 cursor-not-allowed text-xs'
-                    }`}
-                  >
-                    {isPickProcessing ? '...' : 'Draft'}
-                  </button>
-                </div>
-              ))}
-              {filteredGolfers.length === 0 && (
-                <div className="text-surface-400 text-center py-8">No golfers found.</div>
-              )}
+            <div className="flex-1 overflow-auto no-scrollbar">
+              <table className="w-full text-left border-collapse">
+                <thead className="sticky top-0 bg-surface-900 border-b border-surface-700 z-10">
+                  <tr>
+                    <th className="p-4 text-[10px] font-black text-surface-500 uppercase tracking-widest">Golfer</th>
+                    <th className="p-4 text-[10px] font-black text-surface-500 uppercase tracking-widest text-center w-24">Odds</th>
+                    <th className="p-4 text-[10px] font-black text-surface-500 uppercase tracking-widest text-right w-24">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-surface-700/50">
+                  {filteredGolfers.slice(0, 100).map(golfer => (
+                    <tr key={golfer.id} className="hover:bg-surface-800/30 transition-colors group">
+                      <td className="p-4">
+                        <div className="font-bold text-surface-100 group-hover:text-primary-400 transition-colors">{golfer.name}</div>
+                      </td>
+                      <td className="p-4 text-center">
+                        <div className="text-xs text-purple-400 font-extrabold font-mono">
+                          {golfer.odds != null ? `+${golfer.odds}` : '—'}
+                        </div>
+                      </td>
+                      <td className="p-4 text-right">
+                        <button 
+                          disabled={!canDraft || isPickProcessing}
+                          onClick={() => handleDraftPlayer(golfer.id)}
+                          className={`px-4 py-1.5 rounded font-black text-[10px] uppercase tracking-widest transition-all ${
+                            canDraft && !isPickProcessing
+                              ? 'bg-primary-600 hover:bg-primary-500 text-surface-900 shadow-glow/10' 
+                              : 'bg-surface-700 text-surface-500 cursor-not-allowed border border-surface-600'
+                          }`}
+                        >
+                          {isPickProcessing ? '...' : 'Draft'}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {filteredGolfers.length === 0 && (
+                    <tr>
+                      <td colSpan={3} className="text-surface-400 text-center py-8 italic">No golfers found.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
             </div>
           </div>
 

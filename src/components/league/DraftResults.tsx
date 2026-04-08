@@ -4,6 +4,7 @@ import type { Draft, DraftPick } from '../../services/draftService'
 import type { League, Team } from '../../services/leagueService'
 import { useAuth } from '../../context/AuthContext'
 import { tournamentService, type Tournament } from '../../services/tournamentService'
+import { supabase } from '../../lib/supabase'
 
 interface DraftResultsProps {
   league: League;
@@ -26,6 +27,8 @@ export default function DraftResults({ league, teams, onBack }: DraftResultsProp
   const [availableGolfers, setAvailableGolfers] = useState<any[]>([])
   const [search, setSearch] = useState('')
   const [savingEdit, setSavingEdit] = useState(false)
+  
+  const [onlineUserIds, setOnlineUserIds] = useState<Set<string>>(new Set())
 
   const handleEditClick = async (pickInfo: { id?: string, team_id: string, round: number, pick_number: number, golfer_id?: string }) => {
     if (!isCommish) return
@@ -51,6 +54,10 @@ export default function DraftResults({ league, teams, onBack }: DraftResultsProp
       }
       const p = await draftService.getDraftPicks(draft.id)
       setPicks(p)
+      
+      const updatedDraft = await draftService.getDraftByTournament(league.id, draft.tournament_id!);
+      if (updatedDraft) setDraft(updatedDraft);
+
       setEditingPick(null)
       setSearch('')
     } catch (err: any) {
@@ -60,20 +67,45 @@ export default function DraftResults({ league, teams, onBack }: DraftResultsProp
     }
   }
 
+  const handleClearPick = async () => {
+    if (!editingPick || !draft || !editingPick.id) return
+    if (!confirm('Are you sure you want to clear this pick selection?')) return
+    setSavingEdit(true)
+    try {
+      await draftService.editDraftPick(editingPick.id, editingPick.team_id, editingPick.golfer_id || '', '');
+      const p = await draftService.getDraftPicks(draft.id)
+      setPicks(p)
+      setEditingPick(null)
+      setSearch('')
+    } catch (err: any) {
+      alert('Failed to clear pick: ' + err.message)
+    } finally {
+      setSavingEdit(false)
+    }
+  }
+
+  const handleJumpToPick = async (pick: any) => {
+    if (!confirm(`Are you sure you want to jump the draft progress to Pick #${pick.pick_number}?`)) return;
+    try {
+      if (!draft) return;
+      await draftService.jumpToPick(draft.id, pick.round, pick.pick_number);
+      setDraft({ ...draft, current_round: pick.round, current_pick: pick.pick_number, status: 'paused' });
+      setEditingPick(null);
+    } catch (err: any) {
+      alert('Failed to jump to pick: ' + err.message);
+    }
+  };
+
   useEffect(() => {
     async function loadResults() {
       try {
-        // 1. Load ALL tournaments first
         const allTournaments = await tournamentService.getTournaments()
         setTournaments(allTournaments)
 
-        // 2. Load all drafts for this league to see what's available
         const d = await draftService.getAllDraftsByLeague(league.id)
 
-        // 3. Set the active draft based on selection
         let activeTournamentId = selectedTournament
         if (activeTournamentId === 'latest') {
-          // If latest (initial load), default to active/upcoming or most recent
           const activeOrUpcoming = allTournaments.find(t => t.status !== 'completed')
           activeTournamentId = activeOrUpcoming?.id || allTournaments[allTournaments.length - 1]?.id || ''
           setSelectedTournament(activeTournamentId)
@@ -98,18 +130,35 @@ export default function DraftResults({ league, teams, onBack }: DraftResultsProp
     loadResults()
   }, [league.id, selectedTournament])
 
-  if (loading) return <div className="p-12 text-center text-surface-400">Loading results...</div>
-
-  const handleToggleDraftLock = async () => {
+  useEffect(() => {
     if (!draft) return;
-    try {
-      const newLocked = !draft.is_locked;
-      await draftService.lockDraftOrder(draft.id, newLocked);
-      setDraft({ ...draft, is_locked: newLocked });
-    } catch (err: any) {
-      alert('Failed to update draft lock: ' + err.message);
-    }
-  };
+
+    const channel = supabase.channel(`draft_presence:${draft.id}`, {
+      config: {
+        presence: {
+          key: user?.id || 'anonymous',
+        },
+      },
+    });
+
+    channel
+      .on('presence', { event: 'sync' }, () => {
+        const state = channel.presenceState();
+        const connectedIds = new Set<string>();
+        Object.keys(state).forEach((key) => {
+          if (key !== 'anonymous') connectedIds.add(key);
+        });
+        setOnlineUserIds(connectedIds);
+      })
+      .subscribe();
+
+    return () => {
+      channel.unsubscribe();
+    };
+  }, [draft?.id, user?.id]);
+
+
+  if (loading) return <div className="p-12 text-center text-surface-400">Loading results...</div>
 
   const renderBoard = () => {
     if (!draft) return null;
@@ -119,22 +168,27 @@ export default function DraftResults({ league, teams, onBack }: DraftResultsProp
     const teamOrder = draft.draft_order;
 
     return (
-      <div className="overflow-x-auto pb-4 no-scrollbar">
+      <div className="overflow-x-auto pb-6 custom-scrollbar">
         <div className="inline-block min-w-full">
-          {/* Header row with teams */}
           <div className="flex border-b border-surface-700 bg-surface-900/50 sticky top-0 z-10 w-full">
             {teamOrder.map((teamId, index) => {
               const team = teams.find(t => t.id === teamId);
+              const isOnline = team?.user_id && onlineUserIds.has(team.user_id);
+              
               return (
-                <div key={teamId} className="flex-1 min-w-[140px] p-4 text-center border-r border-surface-700 last:border-r-0">
-                  <div className="text-xs font-bold text-surface-100 truncate">{team?.team_name || 'Team'}</div>
-                  <div className="text-[9px] text-surface-500 uppercase tracking-tighter mt-0.5 font-mono">Slot {index + 1}</div>
+                <div key={teamId} className={`flex-1 min-w-[160px] p-4 text-center border-r border-surface-700 last:border-r-0 transition-all ${isOnline ? 'bg-primary-500/10' : 'opacity-40 grayscale'}`}>
+                  <div className={`text-[11px] font-bold truncate mb-1 ${isOnline ? 'text-primary-400' : 'text-surface-400'}`}>
+                    {team?.team_name || 'Team'}
+                  </div>
+                  <div className="flex items-center justify-center gap-1.5 mt-0.5">
+                    <div className={`w-1.5 h-1.5 rounded-full ${isOnline ? 'bg-primary-500 animate-pulse' : 'bg-surface-700'}`}></div>
+                    <div className="text-[9px] text-surface-500 uppercase tracking-tighter font-mono">{isOnline ? 'Joined' : 'Slot ' + (index + 1)}</div>
+                  </div>
                 </div>
               );
             })}
           </div>
 
-          {/* Rounds */}
           {Array.from({ length: rounds }).map((_, roundIdx) => {
             const roundNum = roundIdx + 1;
             const isEvenRound = roundNum % 2 === 0;
@@ -149,7 +203,7 @@ export default function DraftResults({ league, teams, onBack }: DraftResultsProp
                   return (
                     <div 
                       key={`${roundNum}-${teamId}`} 
-                      className={`flex-1 min-w-[140px] p-3 border-r border-surface-700 last:border-r-0 bg-surface-800/20`}
+                      className="flex-1 min-w-[160px] p-3 border-r border-surface-700 last:border-r-0 bg-surface-800/10"
                     >
                       <div className="flex justify-between items-start mb-2">
                         <span className="text-[10px] font-mono font-bold text-surface-600">{roundNum}.{displayIndex + 1}</span>
@@ -171,21 +225,7 @@ export default function DraftResults({ league, teams, onBack }: DraftResultsProp
                           )}
                         </div>
                       ) : (
-                        <div 
-                          className={`h-4 rounded w-full ${isCommish && !draft.is_locked ? 'bg-primary-500/10 border border-primary-500/20 text-[8px] flex items-center justify-center text-primary-500/50 uppercase font-bold cursor-pointer hover:bg-primary-500/20 hover:text-primary-400 transition-colors' : 'bg-surface-700/20 animate-pulse w-3/4'}`}
-                          title={isCommish && !draft.is_locked ? "Click to add a missing pick" : "Future Pick"}
-                          onClick={() => {
-                            if (isCommish && !draft.is_locked) {
-                              handleEditClick({
-                                team_id: teamId,
-                                round: roundNum,
-                                pick_number: pickNumber
-                              })
-                            }
-                          }}
-                        >
-                           {isCommish && !draft.is_locked ? 'ADD PICK' : ''}
-                        </div>
+                        <div className="h-4 rounded w-full bg-surface-700/20 animate-pulse w-3/4"></div>
                       )}
                     </div>
                   );
@@ -200,33 +240,47 @@ export default function DraftResults({ league, teams, onBack }: DraftResultsProp
 
   const renderList = () => {
     return (
-      <div className="divide-y divide-surface-700/50 max-h-[600px] overflow-y-auto no-scrollbar">
-        {picks.map(pick => {
-          const team = teams.find(t => t.id === pick.team_id)
-          return (
-            <div 
-              key={pick.id} 
-              onClick={() => isCommish && handleEditClick(pick)}
-              className={`p-4 flex items-center justify-between transition-colors ${isCommish ? 'cursor-pointer hover:bg-surface-800/50' : 'hover:bg-surface-800/30'}`}
-            >
-              <div className="flex items-center gap-4">
-                <div className="w-12 text-center text-surface-500 font-mono text-xs">
-                  {pick.round}.{pick.pick_number}
-                </div>
-                <div>
-                  <div className="font-bold text-surface-100">{team?.team_name}</div>
-                  <div className={`text-sm font-medium ${isCommish ? 'text-surface-300' : 'text-primary-400'}`}>
-                    {(pick as any).golfer?.name || <span className="text-orange-400">⚠️ Blank Slot</span>}
-                    {isCommish && <span className="ml-2 text-[10px] bg-primary-500/20 text-primary-400 px-1.5 py-0.5 rounded uppercase tracking-wider font-bold">Edit</span>}
-                  </div>
-                </div>
-              </div>
-              <div className="text-[10px] text-surface-600 uppercase font-black tracking-widest">
-                Pick #{pick.pick_number}
-              </div>
-            </div>
-          )
-        })}
+      <div className="overflow-x-auto">
+        <table className="w-full text-left border-collapse">
+          <thead className="bg-surface-800/50 border-b border-surface-700 sticky top-0 z-10">
+            <tr>
+              <th className="p-4 text-[10px] font-black text-surface-500 uppercase tracking-widest w-20">Pick</th>
+              <th className="p-4 text-[10px] font-black text-surface-500 uppercase tracking-widest">Team</th>
+              <th className="p-4 text-[10px] font-black text-surface-500 uppercase tracking-widest">Golfer</th>
+              <th className="p-4 text-[10px] font-black text-surface-500 uppercase tracking-widest text-center">Odds</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-surface-700/50">
+            {picks.map(pick => {
+              const team = teams.find(t => t.id === pick.team_id)
+              return (
+                <tr 
+                  key={pick.id} 
+                  onClick={() => isCommish && handleEditClick(pick)}
+                  className={`group transition-colors ${isCommish ? 'cursor-pointer hover:bg-surface-800/50' : 'hover:bg-surface-800/30'}`}
+                >
+                  <td className="p-4">
+                    <div className="text-surface-500 font-mono text-xs">#{pick.pick_number}</div>
+                    <div className="text-[9px] text-surface-600 uppercase font-black">{pick.round}.{pick.pick_number}</div>
+                  </td>
+                  <td className="p-4">
+                    <div className="font-bold text-surface-100">{team?.team_name}</div>
+                  </td>
+                  <td className="p-4">
+                    <div className={`font-bold ${isCommish ? 'text-surface-100 group-hover:text-primary-400' : 'text-primary-400'}`}>
+                      {(pick as any).golfer?.name || <span className="text-orange-400">⚠️ Blank Slot</span>}
+                    </div>
+                  </td>
+                  <td className="p-4 text-center">
+                    <div className="text-xs text-purple-400 font-black">
+                      {(pick as any).odds != null ? `+${(pick as any).odds}` : '—'}
+                    </div>
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
       </div>
     );
   };
@@ -245,24 +299,13 @@ export default function DraftResults({ league, teams, onBack }: DraftResultsProp
           )}
           <div>
             <h3 className="text-xl font-display font-bold text-surface-50">Draft Results</h3>
-            <p className="text-surface-400 text-sm capitalize">{league.name} • {league.draft_status}</p>
+            <p className="text-surface-400 text-sm">
+              {league.name} • <span className="capitalize">{league.draft_status === 'pending' && picks.length > 0 ? 'Paused' : league.draft_status}</span>
+            </p>
           </div>
         </div>
 
         <div className="flex items-center gap-3">
-          {isCommish && draft && (
-             <button
-               onClick={handleToggleDraftLock}
-               className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border ${
-                 draft.is_locked
-                   ? 'bg-amber-500/10 text-amber-500 border-amber-500/30 hover:bg-amber-500 hover:text-surface-900'
-                   : 'bg-green-500/10 text-green-500 border-green-500/30 hover:bg-green-500 hover:text-surface-900'
-               }`}
-             >
-               {draft.is_locked ? '🔓 Unlock Draft' : '🔒 Lock Draft'}
-             </button>
-          )}
-
           {tournaments.length > 0 && (
              <div className="bg-surface-800/50 border border-surface-700/30 rounded-xl px-3 py-1.5 flex flex-col min-w-[200px] transition-all hover:border-primary-500/30">
                <label className="text-[9px] text-surface-500 uppercase font-black tracking-widest leading-none mb-1">Draft Schedule</label>
@@ -290,15 +333,17 @@ export default function DraftResults({ league, teams, onBack }: DraftResultsProp
               onClick={() => setView('list')}
               className={`px-4 py-2 rounded-md text-xs font-bold transition-all ${view === 'list' ? 'bg-primary-600 text-surface-900 shadow-glow/10' : 'text-surface-400 hover:text-surface-100'}`}
             >
-              List
+              Golfers
             </button>
           </div>
         </div>
       </div>
 
-      <div className="bg-surface-900/40 border border-surface-700/50 rounded-2xl overflow-hidden min-h-[300px] flex flex-col items-center justify-center">
+      <div className={`bg-surface-900/40 border border-surface-700/50 rounded-2xl overflow-hidden min-h-[400px] flex flex-col ${!draft ? 'items-center justify-center' : ''}`}>
         {draft ? (
-           view === 'board' ? renderBoard() : renderList()
+           <div className="w-full h-full overflow-hidden">
+             {view === 'board' ? renderBoard() : renderList()}
+           </div>
         ) : (
           <div className="text-center p-12">
             <div className="w-16 h-16 bg-surface-800 border border-surface-700 rounded-2xl flex items-center justify-center text-2xl mx-auto mb-4 opacity-50">
@@ -327,12 +372,32 @@ export default function DraftResults({ league, teams, onBack }: DraftResultsProp
                   Round {editingPick.round} • Pick {editingPick.pick_number}
                 </p>
               </div>
-              <button 
-                onClick={() => { setEditingPick(null); setSearch(''); }}
-                className="w-8 h-8 flex items-center justify-center rounded-full bg-surface-800 text-surface-400 hover:text-white hover:bg-surface-700 transition-colors"
-              >
-                ✖
-              </button>
+              <div className="flex items-center gap-2">
+                {isCommish && editingPick?.id && (
+                  <button
+                    onClick={handleClearPick}
+                    className="px-3 py-1.5 bg-red-500/10 text-red-500 border border-red-500/20 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-red-500 hover:text-white transition-all"
+                    title="Remove golfer from this slot"
+                  >
+                    Clear Selection
+                  </button>
+                )}
+                {isCommish && draft?.status === 'paused' && (
+                  <button
+                    onClick={() => handleJumpToPick(editingPick)}
+                    className="px-3 py-1.5 bg-primary-600/10 text-primary-400 border border-primary-500/30 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-primary-600 hover:text-surface-900 transition-all"
+                    title="Restart the draft progress from this pick slot"
+                  >
+                    Set as Current Pick
+                  </button>
+                )}
+                <button 
+                  onClick={() => { setEditingPick(null); setSearch(''); }}
+                  className="w-8 h-8 flex items-center justify-center rounded-full bg-surface-800 text-surface-400 hover:text-white hover:bg-surface-700 transition-colors"
+                >
+                  ✖
+                </button>
+              </div>
             </div>
             
             <div className="p-4 border-b border-surface-700">
@@ -366,7 +431,7 @@ export default function DraftResults({ league, teams, onBack }: DraftResultsProp
                     >
                       <div>
                         <div className="font-bold text-surface-100 group-hover:text-primary-400 transition-colors">{g.name}</div>
-                        <div className="text-xs text-surface-500 mt-0.5">OWGR: {g.owg_rank || 'N/A'}</div>
+                        <div className="text-xs text-surface-500 mt-0.5">Odds: {g.odds != null ? `+${g.odds}` : 'N/A'}</div>
                       </div>
                       <div className="px-3 py-1 bg-surface-800 rounded font-bold text-xs text-surface-400 group-hover:bg-primary-600 group-hover:text-surface-900 transition-colors">
                         Select

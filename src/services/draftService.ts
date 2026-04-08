@@ -190,6 +190,9 @@ export const draftService = {
   },
 
   async getDraftPicks(draftId: string): Promise<any[]> {
+    // 1. Get the draft to know the tournament_id
+    const { data: draft } = await supabase.from('drafts').select('tournament_id').eq('id', draftId).single()
+
     const { data, error } = await supabase
       .from('draft_picks')
       .select(`
@@ -200,7 +203,26 @@ export const draftService = {
       .order('pick_number', { ascending: true })
 
     if (error) throw error
-    return data || []
+    if (!data || !draft?.tournament_id) return data || []
+
+    // 2. Fetch odds for these golfers in this tournament
+    const golferIds = data.map(p => p.golfer_id)
+    const { data: oddsData } = await supabase
+      .from('tournament_golfers')
+      .select('golfer_id, odds')
+      .eq('tournament_id', draft.tournament_id)
+      .in('golfer_id', golferIds)
+    
+    const oddsMap: Record<string, number> = {}
+    oddsData?.forEach(o => {
+      oddsMap[o.golfer_id] = o.odds
+    })
+
+    // 3. Attach odds to picks
+    return data.map(p => ({
+      ...p,
+      odds: oddsMap[p.golfer_id]
+    }))
   },
 
   async makePick(
@@ -267,9 +289,11 @@ export const draftService = {
       .from('tournament_golfers')
       .select(`
         owg_rank,
+        odds,
         golfer:golfers!inner(*)
       `)
       .eq('tournament_id', tournamentId)
+      .order('odds', { ascending: true, nullsFirst: false })
       .order('owg_rank', { ascending: true })
 
     if (pickedIds.length > 0) {
@@ -282,7 +306,8 @@ export const draftService = {
     // 4. Transform and return
     return field?.map(f => ({
       ...(f.golfer as any),
-      owg_rank: f.owg_rank
+      owg_rank: f.owg_rank || 9999,
+      odds: f.odds // Ensure this property is explicitly set and returned
     })) || []
   },
 
@@ -325,10 +350,40 @@ export const draftService = {
     await supabase.from('leagues').update({ draft_status: 'pending' }).eq('id', leagueId)
   },
 
+  async clearDraftPicks(draftId: string): Promise<void> {
+    // 1. Delete all picks for this draft
+    await supabase.from('draft_picks').delete().eq('draft_id', draftId)
+    
+    // 2. Reset draft progress and status
+    const { error } = await supabase
+      .from('drafts')
+      .update({
+        current_round: 1,
+        current_pick: 1,
+        status: 'pending'
+      })
+      .eq('id', draftId)
+    
+    if (error) throw error
+  },
+
+  async jumpToPick(draftId: string, round: number, pickNumber: number): Promise<void> {
+    const { error } = await supabase
+      .from('drafts')
+      .update({
+        current_round: round,
+        current_pick: pickNumber,
+        status: 'pending' // Workaround for missing 'paused' enum value
+      })
+      .eq('id', draftId)
+    
+    if (error) throw error
+  },
+
   async pauseDraft(draftId: string): Promise<void> {
     const { error } = await supabase
       .from('drafts')
-      .update({ status: 'paused' })
+      .update({ status: 'pending' }) // Workaround for missing 'paused' enum value
       .eq('id', draftId)
     if (error) throw error
   },

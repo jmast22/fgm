@@ -58,6 +58,7 @@ export default function LeagueDashboard() {
   const [wheelItems, setWheelItems] = useState<string[]>([])
   const [isDraftLocked, setIsDraftLocked] = useState(false)
   const [currentDraftId, setCurrentDraftId] = useState<string | null>(null)
+  const [saveLoading, setSaveLoading] = useState(false)
 
 
   useEffect(() => {
@@ -165,22 +166,17 @@ export default function LeagueDashboard() {
     setEditDraftOrder(newOrder)
   }
 
-  const handleSaveSettings = async () => {
+  const handleSaveCoreSettings = async () => {
     try {
-      setLoading(true)
-      
-      // 1. Update League Settings
+      setSaveLoading(true)
       const updated = await leagueService.updateLeague(league!.id, editSettings)
       
-      // 2. Prune excess placeholders if max_teams was reduced
       const currentTeams = await leagueService.getLeagueTeams(league!.id);
       if (currentTeams.length > editSettings.max_teams) {
          let toRemove = currentTeams.length - editSettings.max_teams;
-         // Find placeholders (no user_id) starting from the bottom of the draft order
-         const currentOrder = editDraftOrder.filter(tid => currentTeams.some(t => t.id === tid));
          const placeholders = [...currentTeams]
            .filter(t => !t.user_id)
-           .sort((a, b) => currentOrder.indexOf(b.id) - currentOrder.indexOf(a.id)); // reverse draft order
+           .reverse();
          
          for (const p of placeholders) {
            if (toRemove <= 0) break;
@@ -189,30 +185,6 @@ export default function LeagueDashboard() {
          }
       }
 
-      // 3. Update Team Names that changed
-      const [newTeamsList] = await Promise.all([
-        leagueService.getLeagueTeams(id!)
-      ]);
-      const validTeamIds = newTeamsList.map(t => t.id);
-
-      const namePromises = Object.entries(editTeamNames).map(([teamId, name]) => {
-         if (!validTeamIds.includes(teamId)) return null;
-         const original = newTeamsList.find(t => t.id === teamId)
-         if (original && original.team_name !== name) {
-           return leagueService.updateTeamName(teamId, name)
-         }
-         return null
-      }).filter(Boolean)
-      
-      await Promise.all(namePromises)
-
-      // 4. Update Draft Order
-      const finalOrder = editDraftOrder.filter(tid => validTeamIds.includes(tid));
-      // if any new teams were created on a subsequent fetch, ensure they are in the order
-      const missingIds = validTeamIds.filter(tid => !finalOrder.includes(tid));
-      await draftService.updateDraftOrder(league!.id, [...finalOrder, ...missingIds], selectedTournamentId)
-
-      // 5. Refresh data
       const [t, m] = await Promise.all([
         leagueService.getLeagueTeams(id!),
         leagueService.getLeagueMembers(id!)
@@ -221,11 +193,70 @@ export default function LeagueDashboard() {
       setLeague(updated)
       setTeams(t)
       setMembers(m)
+      alert('Core settings saved successfully!')
     } catch (err: any) {
-      alert('Failed to save settings: ' + err.message)
+      alert('Failed to save core settings: ' + err.message)
     } finally {
-      setLoading(false)
+      setSaveLoading(false)
     }
+  }
+
+  const handleSaveTeamNames = async () => {
+    try {
+      setSaveLoading(true)
+      const currentTeams = await leagueService.getLeagueTeams(league!.id);
+      const validTeamIds = currentTeams.map(t => t.id);
+
+      const namePromises = Object.entries(editTeamNames).map(([teamId, name]) => {
+         if (!validTeamIds.includes(teamId)) return null;
+         const original = currentTeams.find(t => t.id === teamId)
+         if (original && original.team_name !== name) {
+           return leagueService.updateTeamName(teamId, name)
+         }
+         return null
+      }).filter(Boolean)
+      
+      await Promise.all(namePromises)
+      
+      const t = await leagueService.getLeagueTeams(id!)
+      setTeams(t)
+      alert('Team names updated successfully!')
+    } catch (err: any) {
+      alert('Failed to save team names: ' + err.message)
+    } finally {
+      setSaveLoading(false)
+    }
+  }
+
+  const handleSaveDraftOrder = async () => {
+    try {
+      setSaveLoading(true)
+      const currentTeams = await leagueService.getLeagueTeams(league!.id);
+      const validTeamIds = currentTeams.map(t => t.id);
+      
+      const finalOrder = editDraftOrder.filter(tid => validTeamIds.includes(tid));
+      const missingIds = validTeamIds.filter(tid => !finalOrder.includes(tid));
+      
+      await draftService.updateDraftOrder(league!.id, [...finalOrder, ...missingIds], selectedTournamentId)
+      
+      // Refresh draft state
+      const draft = await draftService.getDraftByTournament(league!.id, selectedTournamentId)
+      if (draft) {
+        setCurrentDraftId(draft.id)
+        setIsDraftLocked(!!draft.is_locked)
+      }
+      
+      alert('Draft order saved successfully!')
+    } catch (err: any) {
+      alert('Failed to save draft order: ' + err.message)
+    } finally {
+      setSaveLoading(false)
+    }
+  }
+
+  const handleSaveSettings = async () => {
+     // Legacy wrapper or remove if not needed. Let's keep it for "Save All" if we want, 
+     // but the user wants independent. I'll remove it from the UI.
   }
 
   const handleDeleteTeam = async (teamId: string) => {
@@ -511,7 +542,7 @@ export default function LeagueDashboard() {
                       </h3>
                       <p className="text-surface-400 text-xs max-w-sm">
                         {league.draft_status === 'pending' 
-                          ? 'Wait for the commissioner to launch the draft lobby.' 
+                          ? 'Wait for the commissioner to open the draft room.' 
                           : 'The draft is live! Head to the draft room to make your picks.'}
                       </p>
                     </div>
@@ -534,7 +565,7 @@ export default function LeagueDashboard() {
                         disabled={startingDraft}
                         className="w-full md:w-64 bg-primary-600 hover:bg-primary-500 text-surface-900 font-black py-3 rounded-xl transition-all shadow-glow/20 disabled:opacity-50 text-base uppercase tracking-wider"
                       >
-                        {startingDraft ? 'Initializing...' : 'Launch Draft'}
+                        {startingDraft ? 'Initializing...' : 'Enter Draft'}
                       </button>
                     )}
                     {league.draft_status === 'active' && (
@@ -542,7 +573,7 @@ export default function LeagueDashboard() {
                         onClick={() => navigate(`/drafts/${league.id}`)}
                         className="w-full md:w-64 bg-primary-600 hover:bg-primary-500 text-surface-900 font-black py-3 rounded-xl transition-all shadow-glow/20 text-base uppercase tracking-wider"
                       >
-                        Enter Draft Room
+                        Enter Draft
                       </button>
                     )}
                   </div>
@@ -705,8 +736,20 @@ export default function LeagueDashboard() {
                           <option value="tournament">Per Tournament</option>
                         </select>
                       </div>
-                     </div>
+
+                      {isCommish && (
+                        <div className="pt-4">
+                          <button 
+                            onClick={handleSaveCoreSettings}
+                            disabled={saveLoading}
+                            className="w-full bg-primary-600 hover:bg-primary-500 text-surface-900 font-black py-3 rounded-xl transition-all shadow-glow/20 disabled:opacity-50 uppercase tracking-widest text-sm"
+                          >
+                            {saveLoading ? 'Saving...' : 'Save Core Info'}
+                          </button>
+                        </div>
+                      )}
                     </div>
+                  </div>
                    )}
 
                    {settingsTab === 'scoring' && (
@@ -957,7 +1000,19 @@ export default function LeagueDashboard() {
                               )
                             })}
                           </div>
-                   </div>
+                          
+                          {isCommish && !isDraftLocked && (
+                            <div className="pt-4">
+                              <button 
+                                onClick={handleSaveDraftOrder}
+                                disabled={saveLoading}
+                                className="w-full bg-primary-600 hover:bg-primary-500 text-surface-900 font-black py-3 rounded-xl transition-all shadow-glow/20 disabled:opacity-50 uppercase tracking-widest text-sm"
+                              >
+                                {saveLoading ? 'Saving...' : 'Save Draft Order'}
+                              </button>
+                            </div>
+                          )}
+                    </div>
                       )}
                     </div>
                    )}
