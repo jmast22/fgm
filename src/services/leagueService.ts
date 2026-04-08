@@ -202,16 +202,25 @@ export const leagueService = {
     if (fetchError) throw fetchError
     if (team.user_id) throw new Error('This team is already claimed.')
 
-    // 2. Add as member
-    const { error: memberError } = await supabase
+    // 2. Add as member (Check first to avoid unnecessary RPC/RLS errors)
+    const { data: existingMember } = await supabase
       .from('league_members')
-      .insert({
-        league_id: team.league_id,
-        user_id: userId
-      })
+      .select('user_id')
+      .eq('league_id', team.league_id)
+      .eq('user_id', userId)
+      .maybeSingle()
 
-    if (memberError && memberError.code !== '23505') {
-      throw memberError
+    if (!existingMember) {
+      const { error: memberError } = await supabase
+        .from('league_members')
+        .insert({
+          league_id: team.league_id,
+          user_id: userId
+        })
+
+      if (memberError && memberError.code !== '23505') {
+        throw memberError
+      }
     }
 
     // 3. Update team with user_id
@@ -234,16 +243,25 @@ export const leagueService = {
 
     if (fetchError) throw fetchError
 
-    // 1. Ensure they are a member
-    const { error: memberError } = await supabase
+    // 1. Ensure they are a member (Check first to avoid unnecessary RPC/RLS errors)
+    const { data: existingMember } = await supabase
       .from('league_members')
-      .insert({
-        league_id: team.league_id,
-        user_id: userId
-      })
+      .select('user_id')
+      .eq('league_id', team.league_id)
+      .eq('user_id', userId)
+      .maybeSingle()
 
-    if (memberError && memberError.code !== '23505') {
-      throw memberError
+    if (!existingMember) {
+      const { error: memberError } = await supabase
+        .from('league_members')
+        .insert({
+          league_id: team.league_id,
+          user_id: userId
+        })
+
+      if (memberError && memberError.code !== '23505') {
+        throw memberError
+      }
     }
 
     // 2. Assign team
@@ -417,50 +435,52 @@ export const leagueService = {
     if (!teams) return []
     const teamIds = teams.map(t => t.id)
 
-    // 1. Get recent roster additions
-    const { data: pickups } = await supabase
-      .from('team_rosters')
-      .select(`
-        team_id,
-        acquired_via,
-        created_at,
-        golfer:golfers (name)
-      `)
-      .in('team_id', teamIds)
-      .neq('acquired_via', 'draft') // Only show transactions, not initial draft
-      .order('created_at', { ascending: false })
-      .limit(20)
+    // Fetch all activity data in parallel
+    const [pickupsResult, tradesResult, blockResult] = await Promise.all([
+      supabase
+        .from('team_rosters')
+        .select(`
+          team_id,
+          acquired_via,
+          created_at,
+          golfer:golfers (name)
+        `)
+        .in('team_id', teamIds)
+        .neq('acquired_via', 'draft')
+        .order('created_at', { ascending: false })
+        .limit(20),
+      supabase
+        .from('trades')
+        .select(`
+          id,
+          offering_team:teams!offering_team_id(team_name),
+          receiving_team:teams!receiving_team_id(team_name),
+          offered_golfers,
+          requested_golfers,
+          updated_at,
+          created_at,
+          status
+        `)
+        .eq('league_id', leagueId)
+        .eq('status', 'completed')
+        .order('updated_at', { ascending: false })
+        .limit(10),
+      supabase
+        .from('team_rosters')
+        .select(`
+          team_id,
+          golfer_id,
+          is_on_trade_block,
+          golfer:golfers (name)
+        `)
+        .in('team_id', teamIds)
+        .eq('is_on_trade_block', true)
+        .limit(10)
+    ])
 
-    // 2. Get completed trades
-    const { data: trades } = await supabase
-      .from('trades')
-      .select(`
-        id,
-        offering_team:teams!offering_team_id(team_name),
-        receiving_team:teams!receiving_team_id(team_name),
-        offered_golfers,
-        requested_golfers,
-        updated_at,
-        created_at,
-        status
-      `)
-      .eq('league_id', leagueId)
-      .eq('status', 'completed')
-      .order('updated_at', { ascending: false })
-      .limit(10)
-
-    // 3. Get trade block additions (using team_rosters)
-    const { data: block } = await supabase
-      .from('team_rosters')
-      .select(`
-        team_id,
-        golfer_id,
-        is_on_trade_block,
-        golfer:golfers (name)
-      `)
-      .in('team_id', teamIds)
-      .eq('is_on_trade_block', true)
-      .limit(10)
+    const pickups = pickupsResult.data
+    const trades = tradesResult.data
+    const block = blockResult.data
 
     // Combine and resolve names...
     const allGolferIds = new Set<string>()

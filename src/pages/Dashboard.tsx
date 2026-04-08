@@ -27,10 +27,20 @@ export default function Dashboard() {
     async function loadDashboardData() {
       setLoading(true)
       try {
-        // 1. Fetch User's Leagues
-        const userLeagues = await leagueService.getUserLeagues(user!.id)
+        // 1. Fetch User's Leagues and Upcoming Tournaments in parallel
+        const [userLeagues, upcoming] = await Promise.all([
+          leagueService.getUserLeagues(user!.id),
+          tournamentService.getUpcomingTournaments()
+        ])
+
+        if (upcoming.length > 0) {
+          setUpcomingTournament(upcoming[0])
+        }
+
+        const activeTourney = upcoming.find(t => t.status === 'active') || upcoming[0]
         
         // 2. Fetch Detailed Info for each League
+        // The scoringService.getSeasonStandings is now batched internally
         const summaries = await Promise.all(userLeagues.map(async (league) => {
           try {
             const [standings, teams] = await Promise.all([
@@ -42,12 +52,24 @@ export default function Dashboard() {
             const myStanding = standings.find(s => s.team_id === myTeam?.id)
             const myRank = standings.findIndex(s => s.team_id === myTeam?.id) + 1
 
+            // Count active golfers for this league/team
+            let activeCount = 0
+            if (myTeam && activeTourney) {
+              const { count } = await supabase
+                .from('team_rosters')
+                .select('*', { count: 'exact', head: true })
+                .eq('team_id', myTeam.id)
+                .eq('tournament_id', activeTourney.id)
+              activeCount = count || 0
+            }
+
             return {
               ...league,
               myRank: myRank || 0,
               myScore: myStanding?.total || 0,
               totalTeams: teams.length,
-              myTeamName: myTeam?.team_name || 'My Team'
+              myTeamName: myTeam?.team_name || 'My Team',
+              activeCount
             }
           } catch (e) {
             console.error(`Error loading league ${league.id} summary:`, e)
@@ -56,37 +78,15 @@ export default function Dashboard() {
               myRank: 0,
               myScore: 0,
               totalTeams: 0,
-              myTeamName: 'My Team'
+              myTeamName: 'My Team',
+              activeCount: 0
             }
           }
         }))
+
         setLeagues(summaries)
+        setActiveGolfersCount(summaries.reduce((acc, l) => acc + (l as any).activeCount, 0))
 
-        // 3. Fetch Upcoming Tournament
-        const upcoming = await tournamentService.getUpcomingTournaments()
-        if (upcoming.length > 0) {
-          setUpcomingTournament(upcoming[0])
-        }
-
-        // 4. Fetch Active Golfers across all user's teams for current tournament
-        const activeTourney = upcoming.find(t => t.status === 'active') || upcoming[0]
-        if (activeTourney) {
-           const { data: teamIds } = await supabase
-             .from('teams')
-             .select('id')
-             .eq('user_id', user!.id)
-           
-           if (teamIds && teamIds.length > 0) {
-             const ids = teamIds.map(t => t.id)
-             const { count } = await supabase
-               .from('team_rosters')
-               .select('*', { count: 'exact', head: true })
-               .in('team_id', ids)
-               .eq('tournament_id', activeTourney.id)
-             
-             setActiveGolfersCount(count || 0)
-           }
-        }
       } catch (error) {
         console.error('Error loading dashboard:', error)
       } finally {

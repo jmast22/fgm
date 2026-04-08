@@ -4,8 +4,18 @@ import { AuthProvider } from './context/AuthContext'
 import ProtectedRoute from './components/auth/ProtectedRoute'
 import AppLayout from './components/layout/AppLayout'
 import { AnimatePresence } from 'framer-motion'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import PageTransition from './components/layout/PageTransition'
 import { ErrorBoundary } from './components/common/ErrorBoundary'
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      refetchOnWindowFocus: false,
+      staleTime: 1000 * 30, // 30 seconds
+    },
+  },
+})
 
 // Lazy-loaded routes
 const Dashboard = lazy(() => import('./pages/Dashboard'))
@@ -51,17 +61,19 @@ const AnimatedRoutes = () => {
 
 function App() {
   return (
-    <AuthProvider>
-      <Router>
-        <AppLayout>
-          <ErrorBoundary>
-            <Suspense fallback={<RouteSkeleton />}>
-              <AnimatedRoutes />
-            </Suspense>
-          </ErrorBoundary>
-        </AppLayout>
-      </Router>
-    </AuthProvider>
+    <QueryClientProvider client={queryClient}>
+      <AuthProvider>
+        <Router>
+          <AppLayout>
+            <ErrorBoundary>
+              <Suspense fallback={<RouteSkeleton />}>
+                <AnimatedRoutes />
+              </Suspense>
+            </ErrorBoundary>
+          </AppLayout>
+        </Router>
+      </AuthProvider>
+    </QueryClientProvider>
   )
 }
 

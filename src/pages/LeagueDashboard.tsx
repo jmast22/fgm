@@ -65,12 +65,18 @@ export default function LeagueDashboard() {
 
     async function loadData() {
       try {
-        const [l, t, m] = await Promise.all([
+        const [l, t, m, tourneys] = await Promise.all([
           leagueService.getLeagueById(id!),
           leagueService.getLeagueTeams(id!),
-          leagueService.getLeagueMembers(id!)
+          leagueService.getLeagueMembers(id!),
+          tournamentService.getTournaments()
         ])
+        
         setLeague(l)
+        setTeams(t)
+        setMembers(m)
+        setTournaments(tourneys)
+
         setEditSettings({
           name: l.name,
           roster_size: l.roster_size,
@@ -79,37 +85,26 @@ export default function LeagueDashboard() {
           waiver_rule: l.waiver_rule || 'Free Agency',
           draft_cycle: l.draft_cycle || 'season'
         })
-        setTeams(t)
-        setMembers(m)
 
-        // Load season standings
-        try {
-          const standings = await scoringService.getSeasonStandings(l.id, l.excluded_tournaments || [])
-          const standingsMap: Record<string, { total: number; tournaments_played: number }> = {}
-          standings.forEach(s => { standingsMap[s.team_id] = { total: s.total, tournaments_played: s.tournaments_played } })
-          setSeasonStandings(standingsMap)
-        } catch (e) {
-          console.error('Failed to load standings:', e)
+        // Default to the first upcoming or active tournament that is NOT excluded
+        const excludedIds = l.excluded_tournaments || []
+        const activeOrUpcoming = tourneys.find(tourney => tourney.status !== 'completed' && !excludedIds.includes(tourney.id))
+        
+        if (activeOrUpcoming) setSelectedTournamentId(activeOrUpcoming.id)
+        else if (tourneys.length > 0) {
+          const firstNonExcluded = tourneys.find(tourney => !excludedIds.includes(tourney.id))
+          setSelectedTournamentId(firstNonExcluded ? firstNonExcluded.id : tourneys[0].id)
         }
 
-        // Load tournaments
-        try {
-          const tourneys = await tournamentService.getTournaments()
-          setTournaments(tourneys)
-          
-          // Default to the first upcoming or active tournament that is NOT excluded
-          const excludedIds = l.excluded_tournaments || []
-          const activeOrUpcoming = tourneys.find(tourney => tourney.status !== 'completed' && !excludedIds.includes(tourney.id))
-          
-          if (activeOrUpcoming) setSelectedTournamentId(activeOrUpcoming.id)
-          else if (tourneys.length > 0) {
-            // If all active/upcoming are excluded, pick the first non-excluded one overall
-            const firstNonExcluded = tourneys.find(tourney => !excludedIds.includes(tourney.id))
-            setSelectedTournamentId(firstNonExcluded ? firstNonExcluded.id : tourneys[0].id)
-          }
-        } catch (err) {
-          console.error('Failed to load tournaments:', err)
-        }
+        // Fetch standings in parallel (it's non-blocking for setting initial state but good to trigger now)
+        scoringService.getSeasonStandings(l.id, l.excluded_tournaments || [])
+          .then(standings => {
+            const standingsMap: Record<string, { total: number; tournaments_played: number }> = {}
+            standings.forEach(s => { standingsMap[s.team_id] = { total: s.total, tournaments_played: s.tournaments_played } })
+            setSeasonStandings(standingsMap)
+          })
+          .catch(e => console.error('Failed to load standings:', e))
+
       } catch (err: any) {
         setError(err.message || 'Failed to load league data')
       } finally {

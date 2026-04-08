@@ -207,30 +207,35 @@ export const scoringService = {
     const golferBoard = this.buildGolferLeaderboard(rawScores)
     const golferMap = new Map(golferBoard.map(g => [g.golfer_id, g]))
 
-    // 4. For each team, get their starters for this tournament
-    const teamResults: TeamTournamentScore[] = []
+    // 4. Get all lineups and starters for this tournament in TWO queries instead of N loops
+    const teamIds = teams.map(t => t.id)
+    const { data: allLineups } = await supabase
+      .from('weekly_lineups')
+      .select('id, team_id')
+      .in('team_id', teamIds)
+      .eq('tournament_id', tournamentId)
 
-    for (const team of teams) {
-      // Get lineup
-      const { data: lineup } = await supabase
-        .from('weekly_lineups')
-        .select('id')
-        .eq('team_id', team.id)
-        .eq('tournament_id', tournamentId)
-        .maybeSingle()
+    const lineupIds = allLineups?.map(l => l.id) || []
+    const teamToLineupMap = new Map(allLineups?.map(l => [l.team_id, l.id]))
 
-      let starterIds: string[] = []
-      if (lineup) {
-        const { data: lineupGolfers } = await supabase
-          .from('lineup_golfers')
-          .select('golfer_id')
-          .eq('lineup_id', lineup.id)
-          .eq('is_starter', true)
+    let lineupGolfersMap: Record<string, string[]> = {}
+    if (lineupIds.length > 0) {
+      const { data: starters } = await supabase
+        .from('lineup_golfers')
+        .select('lineup_id, golfer_id')
+        .in('lineup_id', lineupIds)
+        .eq('is_starter', true)
+      
+      starters?.forEach(s => {
+        if (!lineupGolfersMap[s.lineup_id]) lineupGolfersMap[s.lineup_id] = []
+        lineupGolfersMap[s.lineup_id].push(s.golfer_id)
+      })
+    }
 
-        starterIds = lineupGolfers?.map(lg => lg.golfer_id) || []
-      }
+    const teamResults: TeamTournamentScore[] = teams.map(team => {
+      const lineupId = teamToLineupMap.get(team.id)
+      const starterIds = lineupId ? (lineupGolfersMap[lineupId] || []) : []
 
-      // Sum the starters' scores
       const starterScores: GolferTournamentScore[] = []
       let r1 = 0, r2 = 0, r3 = 0, r4 = 0
 
@@ -245,14 +250,14 @@ export const scoringService = {
         }
       })
 
-      teamResults.push({
+      return {
         team_id: team.id,
         team_name: team.team_name,
         r1, r2, r3, r4,
         total: r1 + r2 + r3 + r4,
         golfer_scores: starterScores
-      })
-    }
+      }
+    })
 
     // Sort by total (lowest = best, most negative under par)
     teamResults.sort((a, b) => a.total - b.total)
@@ -291,21 +296,106 @@ export const scoringService = {
       return (teams || []).map(t => ({ team_id: t.id, team_name: t.team_name, total: 0, tournaments_played: 0 }))
     }
 
-    const tournaments = tournamentIds.map(id => ({ id }))
+    // 1. Get all teams in the league
+    const { data: teams } = await supabase
+      .from('teams')
+      .select('id, team_name')
+      .eq('league_id', leagueId)
+    
+    if (!teams || teams.length === 0) return []
+    const teamIds = teams.map(t => t.id)
 
-    // Aggregate each tournament's scores
-    const teamTotals: Record<string, { team_name: string; total: number; tournaments_played: number }> = {}
-
-    for (const tournament of tournaments) {
-      const teamBoard = await this.getTeamLeaderboard(leagueId, tournament.id)
-      teamBoard.forEach(ts => {
-        if (!teamTotals[ts.team_id]) {
-          teamTotals[ts.team_id] = { team_name: ts.team_name, total: 0, tournaments_played: 0 }
-        }
-        teamTotals[ts.team_id].total += ts.total
-        if (ts.total !== 0) teamTotals[ts.team_id].tournaments_played++
+    // 2. Fetch ALL lineups for these tournaments in one query
+    const { data: allLineups } = await supabase
+      .from('weekly_lineups')
+      .select('id, team_id, tournament_id')
+      .in('team_id', teamIds)
+      .in('tournament_id', tournamentIds)
+    
+    const lineupIds = allLineups?.map(l => l.id) || []
+    
+    // 3. Fetch ALL starters for these lineups in one query
+    let startersMap: Record<string, string[]> = {}
+    if (lineupIds.length > 0) {
+      const { data: starters } = await supabase
+        .from('lineup_golfers')
+        .select('lineup_id, golfer_id')
+        .in('lineup_id', lineupIds)
+        .eq('is_starter', true)
+      
+      starters?.forEach(s => {
+        if (!startersMap[s.lineup_id]) startersMap[s.lineup_id] = []
+        startersMap[s.lineup_id].push(s.golfer_id)
       })
     }
+
+    // 4. Fetch ALL round stats for all relevant tournaments in one query
+    const { data: allStats, error: statsError } = await supabase
+      .from('golfer_round_stats')
+      .select(`
+        golfer_id,
+        tournament_id,
+        round,
+        score,
+        made_cut,
+        golfer:golfers (name)
+      `)
+      .in('tournament_id', tournamentIds)
+
+    if (statsError) throw statsError
+    
+    // Group stats by tournament for penalty calculation
+    const statsByTournament: Record<string, any[]> = {}
+    allStats?.forEach(s => {
+      if (!statsByTournament[s.tournament_id]) statsByTournament[s.tournament_id] = []
+      statsByTournament[s.tournament_id].push(s)
+    })
+
+    // 5. Pre-calculate golfer leaderboards for each tournament
+    const boardsByTournament: Record<string, Map<string, GolferTournamentScore>> = {}
+    tournamentIds.forEach(tid => {
+       const tourneyStats = statsByTournament[tid] || []
+       const board = this.buildGolferLeaderboard(tourneyStats)
+       boardsByTournament[tid] = new Map(board.map(g => [g.golfer_id, g]))
+    })
+
+    // 6. Aggregate season totals
+    const teamTotals: Record<string, { team_name: string; total: number; tournaments_played: number }> = {}
+    teams.forEach(t => {
+      teamTotals[t.id] = { team_name: t.team_name, total: 0, tournaments_played: 0 }
+    })
+
+    // Group lineups by team/tournament for easy lookup
+    const lineupLookup: Record<string, string> = {} // "teamId-tournamentId" -> lineupId
+    allLineups?.forEach(l => {
+      lineupLookup[`${l.team_id}-${l.tournament_id}`] = l.id
+    })
+
+    tournamentIds.forEach(tid => {
+      const tourneyBoard = boardsByTournament[tid]
+      if (!tourneyBoard) return
+
+      teams.forEach(team => {
+        const lid = lineupLookup[`${team.id}-${tid}`]
+        const starterIds = lid ? (startersMap[lid] || []) : []
+        
+        let tourneyTotal = 0
+        let hasStarter = false
+        
+        starterIds.forEach(sid => {
+          const gs = tourneyBoard.get(sid)
+          if (gs) {
+            tourneyTotal += gs.total
+            hasStarter = true
+          }
+        })
+        
+        if (hasStarter || starterIds.length > 0) {
+          teamTotals[team.id].total += tourneyTotal
+          teamTotals[team.id].tournaments_played++
+        }
+      })
+    })
 
     return Object.entries(teamTotals)
       .map(([team_id, data]) => ({ team_id, ...data }))

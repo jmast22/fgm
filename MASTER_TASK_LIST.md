@@ -182,6 +182,7 @@
 - [x] Commissioner Roster Manipulation: Allow the commissioner to view any team's Roster tab and manipulate it as if they were the owner.
 - [x] Post-Draft Pick Editing (Optional): Allow commissioners to manually swap picks or adjust draft boards retroactively if errors occurred without resetting the whole draft.
 - [x] Transfer Team Ownership: Allow commissioners to manually assign an "orphaned" team to a specific new user.
+- [x] **Bug Fix**: Resolved RLS policy violation on `league_members` that prevented commissioners from assigning owners to orphaned teams.
 
 ---
 
