@@ -20,6 +20,7 @@ interface GolferWithStats {
   tournaments_played: number
   is_rostered: boolean
   rostered_team?: string
+  odds?: number
 }
 
 export default function GolfersTab({ league, teams }: GolfersTabProps) {
@@ -28,7 +29,7 @@ export default function GolfersTab({ league, teams }: GolfersTabProps) {
   const [loading, setLoading] = useState(true)
   const [searchTerm, setSearchTerm] = useState('')
   const [showRosteredOnly, setShowRosteredOnly] = useState(false)
-  const [sortBy, setSortBy] = useState<'rank' | 'score' | 'name'>('rank')
+  const [sortBy, setSortBy] = useState<'rank' | 'score' | 'name' | 'odds'>('score')
   const [sortDesc, setSortDesc] = useState(false)
   const [myRoster, setMyRoster] = useState<RosterGolfer[]>([])
   const [tournamentFields, setTournamentFields] = useState<Record<string, Set<string>>>({})
@@ -88,12 +89,19 @@ export default function GolfersTab({ league, teams }: GolfersTabProps) {
       // 1.5 Get all tournament golfers to build field filters
       const { data: allFields } = await supabase
         .from('tournament_golfers')
-        .select('tournament_id, golfer_id')
+        .select('tournament_id, golfer_id, odds')
       
       const fieldMap: Record<string, Set<string>> = {} 
+      const golferOdds: Record<string, number> = {}
+
       allFields?.forEach(f => {
         if (!fieldMap[f.tournament_id]) fieldMap[f.tournament_id] = new Set()
         fieldMap[f.tournament_id].add(f.golfer_id)
+        
+        // Show odds for the selected tournament or the active/upcoming one
+        if (f.tournament_id === effectiveTournamentId && f.odds) {
+          golferOdds[f.golfer_id] = f.odds
+        }
       })
       setTournamentFields(fieldMap)
       
@@ -220,7 +228,8 @@ export default function GolfersTab({ league, teams }: GolfersTabProps) {
           total_score: stats?.totalScore ?? 0,
           tournaments_played: stats?.tournaments.size ?? 0,
           is_rostered: !!teamId,
-          rostered_team: team?.team_name
+          rostered_team: team?.team_name,
+          odds: golferOdds[g.id]
         }
       })
 
@@ -268,6 +277,17 @@ export default function GolfersTab({ league, teams }: GolfersTabProps) {
       supabase.removeChannel(fieldSubscription)
     }
   }, [league.id, myTeam?.id, selectedTournamentId])
+
+  // Update sort default when tournament selection changes
+  useEffect(() => {
+    if (selectedTournamentId === 'all') {
+      setSortBy('score')
+      setSortDesc(false)
+    } else {
+      setSortBy('odds')
+      setSortDesc(false)
+    }
+  }, [selectedTournamentId])
 
   // (Removed redundant draft check effect, it's now handled in loadData)
 
@@ -335,13 +355,14 @@ export default function GolfersTab({ league, teams }: GolfersTabProps) {
     let result = 0;
     if (sortBy === 'rank') result = (a.owg_rank || 9999) - (b.owg_rank || 9999)
     else if (sortBy === 'score') result = a.total_score - b.total_score // lower is better
+    else if (sortBy === 'odds') result = (a.odds || 99999) - (b.odds || 99999)
     else result = a.name.localeCompare(b.name)
 
     return sortDesc ? -result : result
   })
 
   // Handle Sort
-  const handleSort = (key: 'rank' | 'score' | 'name') => {
+  const handleSort = (key: 'rank' | 'score' | 'name' | 'odds') => {
     if (sortBy === key) {
       setSortDesc(!sortDesc)
     } else {
@@ -419,9 +440,11 @@ export default function GolfersTab({ league, teams }: GolfersTabProps) {
                 <th className="py-4 font-black text-xs text-surface-500 uppercase tracking-widest px-4 cursor-pointer hover:text-surface-300 transition-colors" onClick={() => handleSort('name')}>
                   Golfer {sortBy === 'name' && <span className="text-primary-400">{sortDesc ? '↑' : '↓'}</span>}
                 </th>
-                <th className="py-4 font-black text-xs text-surface-500 uppercase tracking-widest px-4 text-center cursor-pointer hover:text-surface-300 transition-colors" onClick={() => handleSort('rank')}>
-                  OWGR {sortBy === 'rank' && <span className="text-primary-400">{sortDesc ? '↑' : '↓'}</span>}
-                </th>
+                {selectedTournamentId !== 'all' && (
+                  <th className="py-4 font-black text-xs text-surface-500 uppercase tracking-widest px-4 text-center cursor-pointer hover:text-surface-300 transition-colors" onClick={() => handleSort('odds')}>
+                    Odds {sortBy === 'odds' && <span className="text-primary-400">{sortDesc ? '↑' : '↓'}</span>}
+                  </th>
+                )}
                 <th className="py-4 font-black text-xs text-surface-500 uppercase tracking-widest px-4 text-center">Tourn.</th>
                 <th className="py-4 font-black text-xs text-surface-500 uppercase tracking-widest px-4 text-right cursor-pointer hover:text-surface-300 transition-colors" onClick={() => handleSort('score')}>
                    Season Score {sortBy === 'score' && <span className="text-primary-400">{sortDesc ? '↑' : '↓'}</span>}
@@ -438,11 +461,13 @@ export default function GolfersTab({ league, teams }: GolfersTabProps) {
                       {golfer.name}
                     </div>
                   </td>
-                  <td className="py-4 px-4 text-center">
-                    <span className={`text-xs font-bold ${golfer.owg_rank && golfer.owg_rank !== 9999 ? 'text-primary-400' : 'text-surface-600'}`}>
-                      {golfer.owg_rank && golfer.owg_rank !== 9999 ? `#${golfer.owg_rank}` : 'N/A'}
-                    </span>
-                  </td>
+                  {selectedTournamentId !== 'all' && (
+                    <td className="py-4 px-4 text-center">
+                      <span className={`text-xs font-black ${golfer.odds ? 'text-purple-400' : 'text-surface-600'}`}>
+                        {golfer.odds ? `+${golfer.odds}` : '—'}
+                      </span>
+                    </td>
+                  )}
                   <td className="py-4 px-4 text-center text-surface-400 text-sm">
                     {golfer.tournaments_played}
                   </td>
@@ -484,7 +509,7 @@ export default function GolfersTab({ league, teams }: GolfersTabProps) {
                 </tr>
               )) : (
                 <tr>
-                  <td colSpan={6} className="py-12 text-center text-surface-500 italic">
+                  <td colSpan={selectedTournamentId === 'all' ? 5 : 6} className="py-12 text-center text-surface-500 italic">
                     No golfers found matching your search.
                   </td>
                 </tr>

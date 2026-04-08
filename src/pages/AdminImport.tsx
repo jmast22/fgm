@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { scraperService } from '../services/scraperService';
-import type { ScrapeResult, FieldScrapeResult } from '../services/scraperService';
+import type { ScrapeResult, FieldScrapeResult, OddsScrapeResult } from '../services/scraperService';
 
 // Helper function to read file as text
 const readFileContent = (file: File): Promise<string> => {
@@ -25,6 +25,7 @@ const AdminImport = () => {
   // Scraper states
   const [scrapeResult, setScrapeResult] = useState<ScrapeResult | null>(null);
   const [fieldScrapeResult, setFieldScrapeResult] = useState<FieldScrapeResult | null>(null);
+  const [oddsScrapeResult, setOddsScrapeResult] = useState<OddsScrapeResult | null>(null);
   const [upcomingTournament, setUpcomingTournament] = useState<{id: string, name: string, start_date: string} | null>(null);
   const [unmatchedAliases, setUnmatchedAliases] = useState<Record<string, string>>({}); // espnName -> golferId
   const [allGolfers, setAllGolfers] = useState<{id: string, name: string}[]>([]);
@@ -144,6 +145,25 @@ const AdminImport = () => {
     }
   };
 
+  const handleOddsScrape = async () => {
+    if (!upcomingTournament) return;
+    setIsLoading(true);
+    setStatus(`🚀 Fetching Odds for ${upcomingTournament.name}...`);
+    try {
+      const result = await scraperService.scrapeGolferOdds(upcomingTournament.id, upcomingTournament.name);
+      setOddsScrapeResult(result);
+      if (result.success) {
+        setStatus(`✅ Odds Scrape complete for ${result.tournamentName}! Upserted ${result.oddsUpserted} odds.`);
+      } else {
+        setStatus(`⚠️ Odds Scrape finished with errors. Check details below.`);
+      }
+    } catch (err: any) {
+      setStatus(`❌ Odds Scrape error: ${err.message}`);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const handleAddAlias = async (espnName: string, golferId: string) => {
     if (!golferId) return;
     
@@ -160,6 +180,10 @@ const AdminImport = () => {
           unmatchedNames: prev.unmatchedNames.filter(n => n !== espnName)
         } : null);
         setFieldScrapeResult(prev => prev ? {
+          ...prev,
+          unmatchedNames: prev.unmatchedNames.filter(n => n !== espnName)
+        } : null);
+        setOddsScrapeResult(prev => prev ? {
           ...prev,
           unmatchedNames: prev.unmatchedNames.filter(n => n !== espnName)
         } : null);
@@ -189,6 +213,10 @@ const AdminImport = () => {
           unmatchedNames: prev.unmatchedNames.filter(n => n !== name)
         } : null);
         setFieldScrapeResult(prev => prev ? {
+          ...prev,
+          unmatchedNames: prev.unmatchedNames.filter(n => n !== name)
+        } : null);
+        setOddsScrapeResult(prev => prev ? {
           ...prev,
           unmatchedNames: prev.unmatchedNames.filter(n => n !== name)
         } : null);
@@ -332,6 +360,114 @@ const AdminImport = () => {
                 <h3 className="text-sm font-bold text-yellow-800 dark:text-yellow-400 mb-2">Errors/Warnings</h3>
                 <ul className="text-xs list-disc pl-4 space-y-1 text-yellow-700 dark:text-yellow-300">
                   {fieldScrapeResult.errors.map((err, i) => <li key={i}>{err}</li>)}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+      </section>
+      
+      {/* Odds Scraper Section */}
+      <section className="bg-white dark:bg-gray-800 p-6 rounded-xl shadow-md border-2 border-purple-500 shadow-purple-100 dark:shadow-purple-900/20">
+        <h2 className="text-xl font-bold mb-2 text-gray-800 dark:text-gray-100 flex items-center gap-2">
+          <span>🎲</span> Golfer Odds Scraper (Phase 19)
+        </h2>
+        <p className="text-sm text-gray-500 dark:text-gray-400 mb-6">
+          Fetch American outright odds from <strong>the-odds-api.com</strong> for the upcoming tournament.
+        </p>
+
+        {upcomingTournament ? (
+          <div className="mb-4 p-4 bg-purple-50 dark:bg-purple-900/20 border border-purple-100 dark:border-purple-800 rounded-lg">
+            <p className="text-sm font-medium text-purple-800 dark:text-purple-300">
+              Target Tournament: <strong>{upcomingTournament.name}</strong> 
+              <span className="ml-2 text-xs opacity-75">(Uses keyword mapping for Odds API keys)</span>
+            </p>
+          </div>
+        ) : (
+          <div className="mb-4 p-4 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-100 dark:border-yellow-800 rounded-lg">
+            <p className="text-sm font-medium text-yellow-800 dark:text-yellow-300">
+              No upcoming tournaments found in the schedule.
+            </p>
+          </div>
+        )}
+
+        <div className="flex flex-wrap gap-4">
+          <button 
+            onClick={handleOddsScrape}
+            disabled={isLoading || !upcomingTournament}
+            className="flex-1 px-6 py-3 bg-purple-600 dark:bg-purple-500 text-white font-bold rounded-lg hover:bg-purple-700 dark:hover:bg-purple-600 disabled:opacity-50 transition-all shadow-lg hover:shadow-purple-200 dark:hover:shadow-none"
+          >
+            {isLoading ? '🔄 Scraping...' : `🚀 Sync Odds for ${upcomingTournament?.name || 'Tournament'}`}
+          </button>
+        </div>
+
+        {oddsScrapeResult && (
+          <div className="mt-6 space-y-4 border-t pt-4 border-gray-100 dark:border-gray-700">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="p-3 bg-gray-50 dark:bg-gray-700 rounded-lg text-center">
+                <span className="block text-xs text-gray-400 uppercase font-bold">Matched</span>
+                <span className="text-xl font-bold text-green-600">{oddsScrapeResult.golfersMatched}</span>
+              </div>
+              <div className="p-3 bg-gray-50 dark:bg-gray-700 rounded-lg text-center">
+                <span className="block text-xs text-gray-400 uppercase font-bold">Unmatched</span>
+                <span className="text-xl font-bold text-red-500">{oddsScrapeResult.golfersUnmatched}</span>
+              </div>
+              <div className="p-3 bg-gray-50 dark:bg-gray-700 rounded-lg text-center">
+                <span className="block text-xs text-gray-400 uppercase font-bold">Odds Updated</span>
+                <span className="text-xl font-bold text-purple-600">{oddsScrapeResult.oddsUpserted}</span>
+              </div>
+              <div className="p-3 bg-gray-50 dark:bg-gray-700 rounded-lg text-center">
+                <span className="block text-xs text-gray-400 uppercase font-bold">Duration</span>
+                <span className="text-xl font-bold text-gray-600 dark:text-gray-300">{(oddsScrapeResult.durationMs / 1000).toFixed(1)}s</span>
+              </div>
+            </div>
+
+            {oddsScrapeResult.unmatchedNames.length > 0 && (
+              <div className="bg-red-50 dark:bg-red-900/20 p-4 rounded-lg border border-red-100 dark:border-red-900/30">
+                <h3 className="text-sm font-bold text-red-800 dark:text-red-400 mb-3 flex items-center gap-2">
+                  <span>⚠️</span> Unmatched Names from Odds API ({oddsScrapeResult.unmatchedNames.length})
+                </h3>
+                <div className="max-h-60 overflow-y-auto space-y-3">
+                  {oddsScrapeResult.unmatchedNames.map(name => (
+                    <div key={name} className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-2 bg-white dark:bg-gray-800 rounded border border-red-100 dark:border-red-800">
+                      <span className="text-sm font-medium">{name}</span>
+                      <div className="flex gap-2">
+                        <select 
+                          className="text-xs p-1 border rounded bg-gray-50 dark:bg-gray-700 dark:border-gray-600 w-32 truncate"
+                          value={unmatchedAliases[name] || ''}
+                          onChange={(e) => setUnmatchedAliases(prev => ({ ...prev, [name]: e.target.value }))}
+                        >
+                          <option value="">Map to golfer...</option>
+                          {allGolfers.map(g => (
+                            <option key={g.id} value={g.id}>{g.name}</option>
+                          ))}
+                        </select>
+                        <button 
+                          onClick={() => handleAddAlias(name, unmatchedAliases[name])}
+                          disabled={!unmatchedAliases[name] || isLoading}
+                          className="px-2 py-1 bg-green-600 text-white text-xs rounded hover:bg-green-700 disabled:opacity-50"
+                        >
+                          Alias
+                        </button>
+                        <button 
+                          onClick={() => handleCreateGolfer(name)}
+                          disabled={isLoading}
+                          className="px-2 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700 disabled:opacity-50"
+                        >
+                          Create New
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {oddsScrapeResult.errors.length > 0 && (
+              <div className="bg-yellow-50 dark:bg-yellow-900/20 p-4 rounded-lg border border-yellow-100 dark:border-yellow-900/30">
+                <h3 className="text-sm font-bold text-yellow-800 dark:text-yellow-400 mb-2">Errors/Warnings</h3>
+                <ul className="text-xs list-disc pl-4 space-y-1 text-yellow-700 dark:text-yellow-300">
+                  {oddsScrapeResult.errors.map((err, i) => <li key={i}>{err}</li>)}
                 </ul>
               </div>
             )}

@@ -41,6 +41,19 @@ export interface FieldScrapeResult {
   durationMs: number
 }
 
+export interface OddsScrapeResult {
+  success: boolean
+  tournamentName: string
+  tournamentId: string
+  golfersMatched: number
+  golfersUnmatched: number
+  oddsUpserted: number
+  unmatchedNames: string[]
+  errors: string[]
+  timestamp: string
+  durationMs: number
+}
+
 interface ESPNCompetitor {
   id: string
   athlete: {
@@ -141,6 +154,19 @@ function determineCutStatus(
   }
 
   return true // made cut (or tournament not past cut yet)
+}
+
+// ── Configuration ─────────────────────────────────────────────────────
+
+const ODDS_API_KEY = '6da4d1915966b3a09f8d286edc801861'
+
+// Map our tournament names (or parts of them) to The Odds API sport keys
+const TOURNAMENT_SPORT_KEY_MAP: Record<string, string> = {
+  'masters': 'golf_masters_tournament_winner',
+  'pga championship': 'golf_pga_championship_winner',
+  'u.s. open': 'golf_us_open_winner',
+  'the open': 'golf_the_open_championship_winner',
+  'the players': 'golf_pga_tour_winner' // Default key for regular PGA Tour events if available
 }
 
 // ── Main Scraper ───────────────────────────────────────────────────────
@@ -750,5 +776,128 @@ export const scraperService = {
     }
 
     return { success: true, id: data.id }
+  },
+
+  /**
+   * Scraper 4: Fetch golfer odds from The Odds API.
+   * Maps Odds API sport keys to our tournament and matches names.
+   */
+  async scrapeGolferOdds(tournamentId: string, tournamentName: string): Promise<OddsScrapeResult> {
+    const startTime = Date.now()
+    const errors: string[] = []
+    const unmatchedNames: string[] = []
+    let golfersMatched = 0
+    let golfersUnmatched = 0
+    let oddsUpserted = 0
+
+    try {
+      // 1. Determine the sport key from the tournament name
+      const nameLower = tournamentName.toLowerCase()
+      let sportKey = ''
+      
+      for (const [key, value] of Object.entries(TOURNAMENT_SPORT_KEY_MAP)) {
+        if (nameLower.includes(key)) {
+          sportKey = value
+          break
+        }
+      }
+
+      if (!sportKey) {
+        throw new Error(`Could not find a matching Odds API sport key for "${tournamentName}".`)
+      }
+
+      console.log(`🏌️ Fetching odds from The Odds API for: ${sportKey}...`)
+
+      // 2. Fetch odds from the API (American outrights)
+      const url = `https://api.the-odds-api.com/v4/sports/${sportKey}/odds/?apiKey=${ODDS_API_KEY}&regions=us&markets=outrights&oddsFormat=american`
+      const response = await fetch(url)
+      
+      if (!response.ok) {
+        throw new Error(`The Odds API returned ${response.status}: ${response.statusText}`)
+      }
+
+      const oddsData = await response.json()
+      
+      if (!Array.isArray(oddsData) || oddsData.length === 0) {
+        throw new Error('No odds data found for this tournament.')
+      }
+
+      // We typically use the first bookmaker that provides comprehensive data (e.g., BetRivers or BetMGM)
+      // For simplicity, we'll look for 'betrivers' or just take the first one available
+      const bookmaker = oddsData[0].bookmakers.find((b: any) => b.key === 'betrivers') || oddsData[0].bookmakers[0]
+      if (!bookmaker) {
+        throw new Error('No bookmaker data available for this market.')
+      }
+
+      const outcomes = bookmaker.markets?.find((m: any) => m.key === 'outrights')?.outcomes || []
+      
+      if (outcomes.length === 0) {
+        throw new Error('No outright outcomes found.')
+      }
+
+      console.log(`📊 Processing ${outcomes.length} odds from ${bookmaker.title}...`)
+
+      // 3. Build lookup and match
+      const lookup = await this.buildGolferLookup()
+      const records: { tournament_id: string; golfer_id: string; odds: number }[] = []
+
+      for (const outcome of outcomes) {
+        const golferId = this.matchGolfer(outcome.name, lookup)
+        if (!golferId) {
+          golfersUnmatched++
+          unmatchedNames.push(outcome.name)
+          continue
+        }
+
+        golfersMatched++
+        records.push({
+          tournament_id: tournamentId,
+          golfer_id: golferId,
+          odds: outcome.price
+        })
+      }
+
+      console.log(`✅ Matched ${golfersMatched} golfers to our DB. ${golfersUnmatched} unmatched.`)
+
+      // 4. Upsert odds into tournament_golfers
+      if (records.length > 0) {
+        const { error: upsertError } = await supabase
+          .from('tournament_golfers')
+          .upsert(records, { onConflict: 'tournament_id,golfer_id' })
+        
+        if (upsertError) {
+          throw upsertError
+        }
+        oddsUpserted = records.length
+      }
+
+      return {
+        success: errors.length === 0,
+        tournamentName,
+        tournamentId,
+        golfersMatched,
+        golfersUnmatched,
+        oddsUpserted,
+        unmatchedNames,
+        errors,
+        timestamp: new Date().toISOString(),
+        durationMs: Date.now() - startTime
+      }
+
+    } catch (err: any) {
+      console.error('❌ Odds Scrape failed:', err)
+      return {
+        success: false,
+        tournamentName,
+        tournamentId,
+        golfersMatched,
+        golfersUnmatched,
+        oddsUpserted,
+        unmatchedNames,
+        errors: [err.message || 'Unknown error'],
+        timestamp: new Date().toISOString(),
+        durationMs: Date.now() - startTime
+      }
+    }
   }
 }

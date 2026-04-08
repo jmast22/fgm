@@ -326,6 +326,15 @@
 - [ ] Add Admin UI button ("Refresh Profiles").
 - [ ] Add RLS policies for `golfer_profiles`.
 
+### Scraper 4: Golfer Odds Scraper
+- [x] **Database Migration**: Add `odds` column (INT) to `tournament_golfers` table in Supabase.
+- [x] **Odds API Integration**: Implement `scrapeGolferOdds(tournamentId: string, eventName: string)` in `scraperService.ts`.
+    - Source: `the-odds-api.com` v4 API (Market: `outrights`, Format: `american`).
+    - Map Odds API sport keys to upcoming tournaments.
+    - Match golfer names and upsert odds into `tournament_golfers`.
+- [x] **Admin UI Integration**: Add "Sync Odds" button to `AdminImport.tsx` targeting the upcoming tournament.
+- [x] **Golfers Tab UI**: Add "Odds" column to `GolfersTab.tsx`, support sorting by odds, and format values with "+" prefix.
+
 ### Golfer Card UI
 - [ ] Create `GolferCard` component (modal or expandable card).
     - Photo, country flag, rankings (OWGR, FedEx).
