@@ -201,33 +201,6 @@ export default function LeagueDashboard() {
     }
   }
 
-  const _handleSaveTeamNames = async () => {
-    try {
-      setSaveLoading(true)
-      const currentTeams = await leagueService.getLeagueTeams(league!.id);
-      const validTeamIds = currentTeams.map(t => t.id);
-
-      const namePromises = Object.entries(editTeamNames).map(([teamId, name]) => {
-         if (!validTeamIds.includes(teamId)) return null;
-         const original = currentTeams.find(t => t.id === teamId)
-         if (original && original.team_name !== name) {
-           return leagueService.updateTeamName(teamId, name)
-         }
-         return null
-      }).filter(Boolean)
-      
-      await Promise.all(namePromises)
-      
-      const t = await leagueService.getLeagueTeams(id!)
-      setTeams(t)
-      alert('Team names updated successfully!')
-    } catch (err: any) {
-      alert('Failed to save team names: ' + err.message)
-    } finally {
-      setSaveLoading(false)
-    }
-  }
-
   const handleSaveDraftOrder = async () => {
     try {
       setSaveLoading(true)
