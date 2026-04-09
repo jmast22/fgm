@@ -362,27 +362,27 @@ export default function LeagueDashboard() {
       </div>
 
       {/* League Header Panel */}
-      <div className="bg-surface-800/60 border border-surface-700/50 rounded-2xl p-4 shadow-xl">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-xl bg-primary-600/20 border border-primary-500/20 flex items-center justify-center text-2xl">
+      <div className="bg-surface-800/60 border border-surface-700/50 rounded-2xl p-3 md:p-4 shadow-xl">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 md:gap-6">
+          <div className="flex items-center gap-2.5 md:gap-3">
+            <div className="w-9 h-9 md:w-12 md:h-12 rounded-lg md:rounded-xl bg-primary-600/20 border border-primary-500/20 flex items-center justify-center text-lg md:text-2xl shrink-0">
               🏆
             </div>
-            <div>
-              <h1 className="text-2xl font-display font-bold text-surface-50 tracking-tight">
+            <div className="min-w-0">
+              <h1 className="text-lg md:text-2xl font-display font-bold text-surface-50 tracking-tight truncate">
                 {league.name}
               </h1>
-              <p className="text-surface-400 text-sm mt-1 flex items-center gap-2">
+              <p className="text-surface-400 text-xs md:text-sm mt-0.5 md:mt-1 flex items-center gap-1.5 md:gap-2">
                 <span>Season {league.season_year}</span>
                 <span className="w-1 h-1 rounded-full bg-surface-600" />
-                <span>{teams.length}/{league.max_teams || 12} Teams Joined</span>
+                <span>{teams.length}/{league.max_teams || 12} Teams</span>
               </p>
             </div>
           </div>
         </div>
 
-        {/* Sub-Navigation Bar */}
-        <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2 p-2 bg-surface-900/50 border border-surface-700/50 rounded-xl">
+        {/* Sub-Navigation Bar — horizontal scroll on mobile, grid on desktop */}
+        <div className="mt-3 md:mt-4 flex md:grid md:grid-cols-4 lg:grid-cols-8 gap-1.5 md:gap-2 p-1.5 md:p-2 bg-surface-900/50 border border-surface-700/50 rounded-xl overflow-x-auto no-scrollbar">
           {tabs.map((tab) => {
             const isActive = activeTab === tab.id
             return (
@@ -390,7 +390,7 @@ export default function LeagueDashboard() {
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
                 className={`
-                  flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg text-sm font-bold transition-all duration-200 whitespace-nowrap
+                  flex items-center justify-center gap-1.5 md:gap-2 px-3 md:px-3 py-2 md:py-2.5 rounded-lg text-xs md:text-sm font-bold transition-all duration-200 whitespace-nowrap shrink-0
                   ${isActive 
                     ? 'bg-primary-600 text-surface-900 shadow-glow/10' 
                     : 'text-surface-400 hover:text-surface-100 hover:bg-surface-800'

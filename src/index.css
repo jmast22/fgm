@@ -121,4 +121,12 @@
   .glass {
     @apply bg-surface-800/40 border border-surface-700/50 backdrop-blur-xl shadow-2xl transition-all;
   }
+
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
 }

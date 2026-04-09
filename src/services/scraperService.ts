@@ -123,51 +123,11 @@ function normalizeName(name: string): string {
     .toLowerCase()
 }
 
-/**
- * Parse ESPN's displayValue score string to a numeric score-to-par.
- * "-3" → -3, "+2" → 2, "E" → 0, "-" → null (not yet played)
- */
-function parseScoreToPar(displayValue: string): number | null {
-  if (!displayValue || displayValue === '-' || displayValue === '--') return null
-  if (displayValue === 'E') return 0
-  const num = parseInt(displayValue, 10)
-  return isNaN(num) ? null : num
-}
-
-function determineCutStatus(
-  competitor: ESPNCompetitor,
-  tournamentRound: number
-): boolean {
-  // 1. If status explicitly says cut
-  const statusName = competitor.status?.type?.name?.toLowerCase() || ''
-  if (statusName.includes('cut')) return false
-
-  // 2. If the tournament has progressed past Round 2, check for Round 3 slots
-  // ESPN adds Round 3 (period 3) once the golfer has officially made the cut,
-  // even if they haven't teed off yet. If they only have 2 linescore entries,
-  // they missed the cut.
-  if (tournamentRound >= 3) {
-    const hasPostCutEntry = (competitor.linescores?.length || 0) >= 3 || 
-                             competitor.linescores?.some(ls => ls.period > 2)
-    
-    if (!hasPostCutEntry) return false
-  }
-
-  return true // made cut (or tournament not past cut yet)
-}
 
 // ── Configuration ─────────────────────────────────────────────────────
-
-const ODDS_API_KEY = '6da4d1915966b3a09f8d286edc801861'
-
-// Map our tournament names (or parts of them) to The Odds API sport keys
-const TOURNAMENT_SPORT_KEY_MAP: Record<string, string> = {
-  'masters': 'golf_masters_tournament_winner',
-  'pga championship': 'golf_pga_championship_winner',
-  'u.s. open': 'golf_us_open_winner',
-  'the open': 'golf_the_open_championship_winner',
-  'the players': 'golf_pga_tour_winner' // Default key for regular PGA Tour events if available
-}
+// NOTE: ODDS_API_KEY and TOURNAMENT_SPORT_KEY_MAP have been moved to the
+// server-side Edge Function (supabase/functions/scrape-odds/index.ts).
+// API keys are no longer shipped to the client browser.
 
 // ── Main Scraper ───────────────────────────────────────────────────────
 
@@ -204,26 +164,6 @@ export const scraperService = {
     return scoreboard.events[0]
   },
 
-  /**
-   * Fetch ESPN scoreboard for a specific event ID using the leaderboard endpoint.
-   */
-  async fetchSpecificESPNEvent(eventId: string): Promise<ESPNEvent | null> {
-    const url = `https://site.api.espn.com/apis/site/v2/sports/golf/leaderboard?event=${eventId}`
-    const response = await fetch(url)
-    if (!response.ok) {
-      throw new Error(`ESPN API returned ${response.status}: ${response.statusText}`)
-    }
-    const data = await response.json()
-    return data.events?.[0] || null
-  },
-
-  /**
-   * Get the list of available ESPN events from the calendar.
-   */
-  async getESPNCalendar(): Promise<{ id: string; label: string; startDate: string; endDate: string }[]> {
-    const scoreboard = await this.fetchESPNScoreboard()
-    return scoreboard.leagues?.[0]?.calendar || []
-  },
 
   /**
    * Build a lookup map: normalized name → golfer_id
@@ -305,28 +245,6 @@ export const scraperService = {
     return null
   },
 
-  /**
-   * Match our DB tournament name to an ESPN Event ID from the calendar.
-   */
-  async getESPNTournamentId(tournamentName: string): Promise<string | null> {
-    const calendar = await this.getESPNCalendar()
-    
-    const cleanDbName = tournamentName
-      .replace(/^THE\s+/i, '')
-      .replace(/\s+pres\.\s+by\s+.*/i, '')
-      .replace(/\s+presented\s+by\s+.*/i, '')
-      .trim().toLowerCase()
-    
-    for (const c of calendar) {
-      if (c.label.toLowerCase().includes(cleanDbName)) return c.id
-      
-      const keyWords = cleanDbName.split(/\s+/).filter(w => w.length > 3)
-      for (const word of keyWords) {
-        if (c.label.toLowerCase().includes(word)) return c.id
-      }
-    }
-    return null
-  },
 
   /**
    * Match an ESPN golfer name to a golfer_id using the lookup map.
@@ -366,192 +284,33 @@ export const scraperService = {
    */
   async scrapeRoundScores(specificTournamentId?: string): Promise<ScrapeResult> {
     const startTime = Date.now()
-    const errors: string[] = []
-    const unmatchedNames: string[] = []
-    let golfersMatched = 0
-    let golfersUnmatched = 0
-    let roundStatsUpserted = 0
 
     try {
-      // 1. Fetch ESPN data
-      console.log('🏌️ Fetching ESPN scoreboard...')
-      const espnEvent = await this.fetchESPNEvent()
-      
-      if (!espnEvent) {
-        return {
-          success: false,
-          tournamentName: 'Unknown',
-          golfersMatched: 0,
-          golfersUnmatched: 0,
-          roundStatsUpserted: 0,
-          unmatchedNames: [],
-          errors: ['No active ESPN event found'],
-          timestamp: new Date().toISOString(),
-          durationMs: Date.now() - startTime
-        }
+      console.log('🏌️ Calling Edge Function for live scores...')
+
+      const { data, error } = await supabase.functions.invoke('scrape-scores', {
+        body: specificTournamentId ? { specificTournamentId } : {}
+      })
+
+      if (error) {
+        throw new Error(error.message || 'Edge Function invocation failed')
       }
 
-      console.log(`✅ Found event: ${espnEvent.name}`)
+      const result = data as ScrapeResult
+      result.durationMs = Date.now() - startTime
 
-      // 2. Match tournament
-      let tournamentId = specificTournamentId
-      let tournamentName = espnEvent.name
-
-      if (!tournamentId) {
-        const matched = await this.matchTournament(espnEvent.name)
-        if (!matched) {
-          return {
-            success: false,
-            tournamentName: espnEvent.name,
-            golfersMatched: 0,
-            golfersUnmatched: 0,
-            roundStatsUpserted: 0,
-            unmatchedNames: [],
-            errors: [`Could not match ESPN tournament "${espnEvent.name}" to any tournament in database`],
-            timestamp: new Date().toISOString(),
-            durationMs: Date.now() - startTime
-          }
-        }
-        tournamentId = matched.id
-        tournamentName = matched.name
-      }
-
-      console.log(`✅ Matched to tournament: ${tournamentName} (${tournamentId})`)
-
-      // 3. Build golfer lookup
-      const lookup = await this.buildGolferLookup()
-      console.log(`✅ Built golfer lookup with ${lookup.size} entries`)
-
-      // 4. Get competitors from ESPN
-      const competitors = espnEvent.competitions?.[0]?.competitors || []
-      if (competitors.length === 0) {
-        return {
-          success: false,
-          tournamentName,
-          tournamentId,
-          golfersMatched: 0,
-          golfersUnmatched: 0,
-          roundStatsUpserted: 0,
-          unmatchedNames: [],
-          errors: ['No competitors found in ESPN data'],
-          timestamp: new Date().toISOString(),
-          durationMs: Date.now() - startTime
-        }
-      }
-
-      console.log(`📊 Processing ${competitors.length} competitors...`)
-
-      // 5. Determine the current tournament round from metadata
-      // ESPN provides this in the competition status
-      const tournamentRound = espnEvent.competitions?.[0]?.status?.period || 1
-      
-      console.log(`⛳ Tournament is currently in: Round ${tournamentRound}`)
-
-      // 6. Process each competitor
-      const records: {
-        tournament_id: string
-        golfer_id: string
-        round: number
-        score: number
-        made_cut: boolean
-      }[] = []
-
-      for (const competitor of competitors) {
-        const espnName = competitor.athlete?.fullName || competitor.athlete?.displayName
-        if (!espnName) {
-          errors.push(`Competitor ${competitor.id} has no name`)
-          continue
-        }
-
-        // Match golfer
-        const golferId = this.matchGolfer(espnName, lookup)
-        if (!golferId) {
-          golfersUnmatched++
-          unmatchedNames.push(espnName)
-          continue
-        }
-
-        golfersMatched++
-
-        // Determine cut status
-        const madeCut = determineCutStatus(competitor, tournamentRound)
-
-        // Extract round scores
-        if (!competitor.linescores) continue
-
-        for (const linescore of competitor.linescores) {
-          const roundNum = linescore.period
-          if (roundNum < 1 || roundNum > 4) continue
-
-          const scoreToPar = parseScoreToPar(linescore.displayValue)
-          if (scoreToPar === null) continue // Round not yet played
-
-          records.push({
-            tournament_id: tournamentId!,
-            golfer_id: golferId,
-            round: roundNum,
-            score: scoreToPar,
-            made_cut: madeCut
-          })
-        }
-      }
-
-      console.log(`✅ Matched ${golfersMatched} golfers, ${golfersUnmatched} unmatched`)
-      console.log(`📝 Upserting ${records.length} round stat records...`)
-
-      // 7. Upsert records in batches
-      const batchSize = 50
-      for (let i = 0; i < records.length; i += batchSize) {
-        const batch = records.slice(i, i + batchSize)
-        
-        const { error: upsertError } = await supabase
-          .from('golfer_round_stats')
-          .upsert(batch, {
-            onConflict: 'tournament_id,golfer_id,round',
-            ignoreDuplicates: false
-          })
-
-        if (upsertError) {
-          errors.push(`Upsert batch error at ${i}: ${upsertError.message}`)
-          console.error(`❌ Upsert error:`, upsertError)
-        } else {
-          roundStatsUpserted += batch.length
-        }
-      }
-
-      // 8. Update tournament status if we have scores
-      if (roundStatsUpserted > 0) {
-        const newStatus = tournamentRound >= 4 ? 'completed' : 'active'
-        await supabase
-          .from('tournaments')
-          .update({ status: newStatus })
-          .eq('id', tournamentId!)
-      }
-
-      console.log(`✅ Scrape complete! ${roundStatsUpserted} records upserted.`)
-
-      return {
-        success: errors.length === 0,
-        tournamentName,
-        tournamentId,
-        golfersMatched,
-        golfersUnmatched,
-        roundStatsUpserted,
-        unmatchedNames,
-        errors,
-        timestamp: new Date().toISOString(),
-        durationMs: Date.now() - startTime
-      }
+      console.log(`✅ Edge Function returned: ${result.roundStatsUpserted} records upserted`)
+      return result
 
     } catch (err: any) {
-      console.error('❌ Scrape failed:', err)
+      console.error('❌ Score Scrape (Edge Function) failed:', err)
       return {
         success: false,
         tournamentName: 'Unknown',
-        golfersMatched,
-        golfersUnmatched,
-        roundStatsUpserted,
-        unmatchedNames,
+        golfersMatched: 0,
+        golfersUnmatched: 0,
+        roundStatsUpserted: 0,
+        unmatchedNames: [],
         errors: [err.message || 'Unknown error'],
         timestamp: new Date().toISOString(),
         durationMs: Date.now() - startTime
@@ -642,112 +401,36 @@ export const scraperService = {
     return data
   },
 
-  /**
-   * Fetch ESPN event by exact matching (or using the active one if omitted).
-   * This logic is simple right now, but theoretically if the current active
-   * event in ESPN is not the upcoming tournament we want, we'd need to search
-   * the calendar. For Phase 17, we'll try matching the upcoming tournament name 
-   * against the calendar / active event.
-   */
   async scrapeTournamentField(tournamentId: string, tournamentName: string): Promise<FieldScrapeResult> {
     const startTime = Date.now()
-    const errors: string[] = []
-    const unmatchedNames: string[] = []
-    let golfersMatched = 0
-    let golfersUnmatched = 0
-    let fieldUpserted = 0
 
     try {
-      console.log(`🏌️ Fetching ESPN scoreboard for field scrape... Targeting: ${tournamentName}`)
+      console.log(`🏌️ Calling Edge Function for field scrape: ${tournamentName}...`)
       
-      // 1. Find the ESPN Event ID from their calendar
-      const espnEventId = await this.getESPNTournamentId(tournamentName)
-      if (!espnEventId) {
-        throw new Error(`Could not find an event named "${tournamentName}" in the ESPN calendar.`)
+      const { data, error } = await supabase.functions.invoke('scrape-field', {
+        body: { tournamentId, tournamentName }
+      })
+
+      if (error) {
+        throw new Error(error.message || 'Edge Function invocation failed')
       }
 
-      // 2. Fetch that specific event directly to get the field
-      const espnEvent = await this.fetchSpecificESPNEvent(espnEventId)
-      
-      if (!espnEvent) {
-        throw new Error('No ESPN event payload returned for this ID.')
-      }
+      const result = data as FieldScrapeResult
+      result.durationMs = Date.now() - startTime
 
-      console.log(`✅ Found event: ${espnEvent.name}`)
-
-      const lookup = await this.buildGolferLookup()
-      const competitors = espnEvent.competitions?.[0]?.competitors || []
-      
-      if (competitors.length === 0) {
-        throw new Error('No competitors found in ESPN data. Event might not be populated yet.')
-      }
-
-      console.log(`📊 Processing ${competitors.length} competitors for field...`)
-
-      const records: { tournament_id: string; golfer_id: string }[] = []
-
-      for (const competitor of competitors) {
-        const espnName = competitor.athlete?.fullName || competitor.athlete?.displayName
-        if (!espnName) {
-           errors.push(`Competitor ${competitor.id} has no name`)
-           continue
-        }
-
-        const golferId = this.matchGolfer(espnName, lookup)
-        if (!golferId) {
-          golfersUnmatched++
-          unmatchedNames.push(espnName)
-          continue
-        }
-
-        golfersMatched++
-        records.push({
-          tournament_id: tournamentId,
-          golfer_id: golferId
-        })
-      }
-
-      console.log(`✅ Matched ${golfersMatched} golfers to our DB. ${golfersUnmatched} unmatched.`)
-
-      if (records.length > 0) {
-        const batchSize = 100
-        for (let i = 0; i < records.length; i += batchSize) {
-          const batch = records.slice(i, i + batchSize)
-          const { error: upsertError } = await supabase
-            .from('tournament_golfers')
-            .upsert(batch, { onConflict: 'tournament_id,golfer_id' })
-          
-          if (upsertError) {
-             errors.push(`Upsert batch error at ${i}: ${upsertError.message}`)
-          } else {
-             fieldUpserted += batch.length
-          }
-        }
-      }
-
-      return {
-        success: errors.length === 0,
-        tournamentName,
-        tournamentId,
-        golfersMatched,
-        golfersUnmatched,
-        fieldUpserted,
-        unmatchedNames,
-        errors,
-        timestamp: new Date().toISOString(),
-        durationMs: Date.now() - startTime
-      }
+      console.log(`✅ Edge Function returned: ${result.fieldUpserted} golfers upserted to field`)
+      return result
 
     } catch (err: any) {
-      console.error('❌ Field Scrape failed:', err)
+      console.error('❌ Field Scrape (Edge Function) failed:', err)
       return {
         success: false,
         tournamentName,
         tournamentId,
-        golfersMatched,
-        golfersUnmatched,
-        fieldUpserted,
-        unmatchedNames,
+        golfersMatched: 0,
+        golfersUnmatched: 0,
+        fieldUpserted: 0,
+        unmatchedNames: [],
         errors: [err.message || 'Unknown error'],
         timestamp: new Date().toISOString(),
         durationMs: Date.now() - startTime
@@ -780,120 +463,41 @@ export const scraperService = {
 
   /**
    * Scraper 4: Fetch golfer odds from The Odds API.
-   * Maps Odds API sport keys to our tournament and matches names.
+   * Now calls the server-side Supabase Edge Function instead of running client-side.
+   * API key stays server-side and is never exposed to the browser.
    */
   async scrapeGolferOdds(tournamentId: string, tournamentName: string): Promise<OddsScrapeResult> {
     const startTime = Date.now()
-    const errors: string[] = []
-    const unmatchedNames: string[] = []
-    let golfersMatched = 0
-    let golfersUnmatched = 0
-    let oddsUpserted = 0
 
     try {
-      // 1. Determine the sport key from the tournament name
-      const nameLower = tournamentName.toLowerCase()
-      let sportKey = ''
-      
-      for (const [key, value] of Object.entries(TOURNAMENT_SPORT_KEY_MAP)) {
-        if (nameLower.includes(key)) {
-          sportKey = value
-          break
-        }
+      console.log(`🏌️ Calling Edge Function for odds: ${tournamentName}...`)
+
+      const { data, error } = await supabase.functions.invoke('scrape-odds', {
+        body: { tournamentId, tournamentName }
+      })
+
+      if (error) {
+        throw new Error(error.message || 'Edge Function invocation failed')
       }
 
-      if (!sportKey) {
-        throw new Error(`Could not find a matching Odds API sport key for "${tournamentName}".`)
-      }
+      // The Edge Function returns the same OddsScrapeResult shape
+      const result = data as OddsScrapeResult
+      // Override durationMs to include round-trip time from client perspective
+      result.durationMs = Date.now() - startTime
 
-      console.log(`🏌️ Fetching odds from The Odds API for: ${sportKey}...`)
-
-      // 2. Fetch odds from the API (American outrights)
-      const url = `https://api.the-odds-api.com/v4/sports/${sportKey}/odds/?apiKey=${ODDS_API_KEY}&regions=us&markets=outrights&oddsFormat=american`
-      const response = await fetch(url)
-      
-      if (!response.ok) {
-        throw new Error(`The Odds API returned ${response.status}: ${response.statusText}`)
-      }
-
-      const oddsData = await response.json()
-      
-      if (!Array.isArray(oddsData) || oddsData.length === 0) {
-        throw new Error('No odds data found for this tournament.')
-      }
-
-      // We typically use the first bookmaker that provides comprehensive data (e.g., BetRivers or BetMGM)
-      // For simplicity, we'll look for 'betrivers' or just take the first one available
-      const bookmaker = oddsData[0].bookmakers.find((b: any) => b.key === 'betrivers') || oddsData[0].bookmakers[0]
-      if (!bookmaker) {
-        throw new Error('No bookmaker data available for this market.')
-      }
-
-      const outcomes = bookmaker.markets?.find((m: any) => m.key === 'outrights')?.outcomes || []
-      
-      if (outcomes.length === 0) {
-        throw new Error('No outright outcomes found.')
-      }
-
-      console.log(`📊 Processing ${outcomes.length} odds from ${bookmaker.title}...`)
-
-      // 3. Build lookup and match
-      const lookup = await this.buildGolferLookup()
-      const records: { tournament_id: string; golfer_id: string; odds: number }[] = []
-
-      for (const outcome of outcomes) {
-        const golferId = this.matchGolfer(outcome.name, lookup)
-        if (!golferId) {
-          golfersUnmatched++
-          unmatchedNames.push(outcome.name)
-          continue
-        }
-
-        golfersMatched++
-        records.push({
-          tournament_id: tournamentId,
-          golfer_id: golferId,
-          odds: outcome.price
-        })
-      }
-
-      console.log(`✅ Matched ${golfersMatched} golfers to our DB. ${golfersUnmatched} unmatched.`)
-
-      // 4. Upsert odds into tournament_golfers
-      if (records.length > 0) {
-        const { error: upsertError } = await supabase
-          .from('tournament_golfers')
-          .upsert(records, { onConflict: 'tournament_id,golfer_id' })
-        
-        if (upsertError) {
-          throw upsertError
-        }
-        oddsUpserted = records.length
-      }
-
-      return {
-        success: errors.length === 0,
-        tournamentName,
-        tournamentId,
-        golfersMatched,
-        golfersUnmatched,
-        oddsUpserted,
-        unmatchedNames,
-        errors,
-        timestamp: new Date().toISOString(),
-        durationMs: Date.now() - startTime
-      }
+      console.log(`✅ Edge Function returned: ${result.oddsUpserted} odds upserted`)
+      return result
 
     } catch (err: any) {
-      console.error('❌ Odds Scrape failed:', err)
+      console.error('❌ Odds Scrape (Edge Function) failed:', err)
       return {
         success: false,
         tournamentName,
         tournamentId,
-        golfersMatched,
-        golfersUnmatched,
-        oddsUpserted,
-        unmatchedNames,
+        golfersMatched: 0,
+        golfersUnmatched: 0,
+        oddsUpserted: 0,
+        unmatchedNames: [],
         errors: [err.message || 'Unknown error'],
         timestamp: new Date().toISOString(),
         durationMs: Date.now() - startTime
