@@ -72,9 +72,20 @@ export default function LiveIndicator({ tournamentId, status }: LiveIndicatorPro
         </span>
       )}
       {lastUpdated && (
-        <span className="text-[9px] text-surface-400 font-bold uppercase tracking-widest whitespace-nowrap">
-          Updated {formatDistanceToNow(lastUpdated, { addSuffix: true })}
-        </span>
+        <div className="flex flex-col">
+          <span className="text-[8px] text-surface-500 font-bold uppercase tracking-widest leading-none">
+            Last Updated
+          </span>
+          <span className="text-[10px] text-surface-300 font-black uppercase tracking-widest leading-tight">
+            {formatDistanceToNow(lastUpdated, { addSuffix: true })
+              .toUpperCase()
+              .replace('ABOUT ', '')
+              .replace('LESS THAN A MINUTE AGO', 'JUST NOW')
+              .replace(' MINUTES AGO', ' MINS AGO')
+              .replace(' MINUTE AGO', ' MIN AGO')
+              .replace(' SECONDS AGO', ' SECS AGO')}
+          </span>
+        </div>
       )}
     </div>
   )
