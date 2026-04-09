@@ -284,12 +284,47 @@ export const rosterService = {
     if (error) throw error
   },
 
-  async toggleTradeBlock(teamId: string, golferId: string, isOnBlock: boolean) {
-    const { error } = await supabase
-      .from('team_rosters')
-      .update({ is_on_trade_block: isOnBlock })
-      .match({ team_id: teamId, golfer_id: golferId })
+  /**
+   * Returns a mapping of golfer_id -> team_name for all golfers rostered in a specific tournament league.
+   * Prioritizes the most recently acquired roster entry to handle any stale data.
+   */
+  async getLeagueLineupMapping(leagueId: string, tournamentId?: string) {
+    const { data: teams } = await supabase
+      .from('teams')
+      .select('id, team_name')
+      .eq('league_id', leagueId)
 
+    if (!teams || teams.length === 0) return {}
+
+    const teamIds = teams.map(t => t.id)
+    
+    // Query team_rosters which is the master list of ownership
+    let query = supabase
+      .from('team_rosters')
+      .select('team_id, golfer_id, acquired_at')
+      .in('team_id', teamIds)
+      .order('acquired_at', { ascending: false })
+
+    if (tournamentId && tournamentId !== 'all') {
+      // In tournament-scoped leagues, find players rostered for this specific tournament
+      // Or if it's a season league, we still want the roster as it stood
+      query = query.or(`tournament_id.eq.${tournamentId},tournament_id.is.null`)
+    }
+
+    const { data: rosters, error } = await query
     if (error) throw error
+
+    const mapping: Record<string, string> = {}
+    rosters?.forEach(r => {
+      // Since we ordered by acquired_at DESC, the FIRST time we see a golfer_id, 
+      // it's their most recent (and presumably current) owner.
+      if (!mapping[r.golfer_id]) {
+        const team = teams.find(t => t.id === r.team_id)
+        if (team) {
+          mapping[r.golfer_id] = team.team_name
+        }
+      }
+    })
+    return mapping
   }
 }

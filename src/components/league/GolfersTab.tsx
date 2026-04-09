@@ -139,24 +139,8 @@ export default function GolfersTab({ league, teams }: GolfersTabProps) {
         })
       }
 
-      // 3. Get team rosters — tournament-scoped for per-tournament leagues
-      const teamIds = teams.map(t => t.id)
-      let rosterQuery = supabase
-        .from('team_rosters')
-        .select('team_id, golfer_id')
-        .in('team_id', teamIds)
-
-      // For per-tournament leagues, only show rosters for the effective tournament
-      if (league.draft_cycle === 'tournament' && effectiveTournamentId !== 'all') {
-        rosterQuery = rosterQuery.eq('tournament_id', effectiveTournamentId)
-      }
-
-      const { data: rosters } = await rosterQuery
-
-      const rosterMap: Record<string, string> = {} // golfer_id -> team_id
-      rosters?.forEach(r => {
-        rosterMap[r.golfer_id] = r.team_id
-      })
+      // 3. Get team rosters/lineups mapping
+      const rosterMap = await rosterService.getLeagueLineupMapping(league.id, effectiveTournamentId)
 
       // 4. Get season stats
       const { data: stats } = await supabase
@@ -217,8 +201,7 @@ export default function GolfersTab({ league, teams }: GolfersTabProps) {
       // 5. Build final golfer list
       const result: GolferWithStats[] = golfers.map(g => {
         const stats = golferStats[g.id]
-        const teamId = rosterMap[g.id]
-        const team = teamId ? teams.find(t => t.id === teamId) : undefined
+        const teamName = rosterMap[g.id]
 
         return {
           id: g.id,
@@ -227,8 +210,8 @@ export default function GolfersTab({ league, teams }: GolfersTabProps) {
           owg_rank: golferRanks[g.id] ?? 9999,
           total_score: stats?.totalScore ?? 0,
           tournaments_played: stats?.tournaments.size ?? 0,
-          is_rostered: !!teamId,
-          rostered_team: team?.team_name,
+          is_rostered: !!teamName,
+          rostered_team: teamName,
           odds: golferOdds[g.id]
         }
       })

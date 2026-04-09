@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { scoringService, formatScore, scoreColor } from '../../services/scoringService'
 import type { TeamTournamentScore, GolferTournamentScore } from '../../services/scoringService'
 import { tournamentService } from '../../services/tournamentService'
+import { rosterService } from '../../services/rosterService'
 import type { Tournament } from '../../services/tournamentService'
 import type { League } from '../../services/leagueService'
 import { supabase } from '../../lib/supabase'
@@ -46,35 +47,20 @@ export default function LeaderboardTab({ league }: LeaderboardTabProps) {
     loadTournaments()
   }, [])
 
-  // Load golfer -> team mapping for this league
+  // Load golfer -> team mapping for this tournament
   useEffect(() => {
-    async function loadTeamRosters() {
+    if (!selectedTournamentId) return
+
+    async function loadMapping() {
       try {
-        const { data: teams } = await supabase
-          .from('teams')
-          .select('id, team_name')
-          .eq('league_id', league.id)
-
-        if (!teams) return
-
-        const teamIds = teams.map(t => t.id)
-        const { data: rosters } = await supabase
-          .from('team_rosters')
-          .select('team_id, golfer_id')
-          .in('team_id', teamIds)
-
-        const mapping: Record<string, string> = {}
-        rosters?.forEach(r => {
-          const team = teams.find(t => t.id === r.team_id)
-          if (team) mapping[r.golfer_id] = team.team_name
-        })
+        const mapping = await rosterService.getLeagueLineupMapping(league.id, selectedTournamentId)
         setGolferTeamMap(mapping)
       } catch (err) {
-        console.error('Failed to load team rosters:', err)
+        console.error('Failed to load golfer team mapping:', err)
       }
     }
-    loadTeamRosters()
-  }, [league.id])
+    loadMapping()
+  }, [selectedTournamentId, league.id])
 
 
   useEffect(() => {
@@ -121,15 +107,17 @@ export default function LeaderboardTab({ league }: LeaderboardTabProps) {
           filter: `tournament_id=eq.${selectedTournamentId}`
         },
         async () => {
-          // Re-fetch scores when data changes
+          // Re-fetch scores and mapping when data changes
           try {
-            const [teamData, rawStats] = await Promise.all([
+            const [teamData, rawStats, mapping] = await Promise.all([
               scoringService.getTeamLeaderboard(league.id, selectedTournamentId),
-              scoringService.getTournamentRoundStats(selectedTournamentId)
+              scoringService.getTournamentRoundStats(selectedTournamentId),
+              rosterService.getLeagueLineupMapping(league.id, selectedTournamentId)
             ])
 
             setTeamScores(teamData)
-
+            setGolferTeamMap(mapping)
+            
             if (rawStats && rawStats.length > 0) {
               const golferBoard = scoringService.buildGolferLeaderboard(rawStats)
               setGolferScores(golferBoard)
