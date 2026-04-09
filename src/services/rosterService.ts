@@ -284,6 +284,15 @@ export const rosterService = {
     if (error) throw error
   },
 
+  async toggleTradeBlock(teamId: string, golferId: string, isOnBlock: boolean) {
+    const { error } = await supabase
+      .from('team_rosters')
+      .update({ is_on_trade_block: isOnBlock })
+      .match({ team_id: teamId, golfer_id: golferId })
+
+    if (error) throw error
+  },
+
   /**
    * Returns a mapping of golfer_id -> team_name for all golfers rostered in a specific tournament league.
    * Prioritizes the most recently acquired roster entry to handle any stale data.
