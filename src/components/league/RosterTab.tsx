@@ -7,7 +7,7 @@ import type { Tournament } from '../../services/tournamentService'
 import type { League, Team } from '../../services/leagueService'
 import { useAuth } from '../../context/AuthContext'
 import { draftService, type Draft } from '../../services/draftService'
-
+import LiveIndicator from '../ui/LiveIndicator'
 interface RosterTabProps {
   league: League;
   teams: Team[];
@@ -424,7 +424,12 @@ export default function RosterTab({ league, teams }: RosterTabProps) {
         {/* Starters Section */}
         <div className="px-3 py-1.5 border-b border-surface-700/50 bg-primary-900/10 flex items-center justify-between">
            <h3 className="text-[10px] font-black text-primary-400 uppercase tracking-widest">Active Lineup</h3>
-           <span className="text-[9px] text-surface-500 font-bold uppercase tracking-tighter">{starters.length} / {league.weekly_starters}</span>
+           <div className="flex items-center gap-3">
+             {selectedTournament && (
+               <LiveIndicator tournamentId={selectedTournamentId} status={selectedTournament.status} />
+             )}
+             <span className="text-[9px] text-surface-500 font-bold uppercase tracking-tighter">{starters.length} / {league.weekly_starters}</span>
+           </div>
         </div>
         <div className="divide-y divide-surface-700/50">
           {starters.length === 0 ? (

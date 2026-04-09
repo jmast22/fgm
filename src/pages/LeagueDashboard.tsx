@@ -15,6 +15,7 @@ import LeaderboardTab from '../components/league/LeaderboardTab'
 import { scoringService, formatScore, scoreColor } from '../services/scoringService'
 import { tournamentService, type Tournament } from '../services/tournamentService'
 import SpinningWheel from '../components/league/SpinningWheel'
+import LiveIndicator from '../components/ui/LiveIndicator'
 
 type TabId = 'roster' | 'leaderboard' | 'league' | 'draft' | 'settings' | 'schedule' | 'golfers' | 'trades';
 
@@ -349,6 +350,8 @@ export default function LeagueDashboard() {
     { id: 'settings', label: 'Settings', icon: '⚙️' },
   ]
 
+  const selectedTournament = tournaments.find(t => t.id === selectedTournamentId)
+
   return (
     <div className="space-y-4">
       {/* Back Button & Breadcrumbs */}
@@ -414,7 +417,12 @@ export default function LeagueDashboard() {
               <div className="bg-surface-800/40 border border-surface-700/50 rounded-xl overflow-hidden shadow-lg">
                 <div className="p-4 border-b border-surface-700/50 bg-surface-900/20 flex items-center justify-between">
                   <h3 className="text-xs font-black text-surface-300 uppercase tracking-widest">League Standings</h3>
-                  <span className="text-[10px] text-surface-500 font-bold uppercase tracking-tighter">Rankings</span>
+                  <div className="flex items-center gap-3">
+                    {selectedTournament && (
+                      <LiveIndicator tournamentId={selectedTournamentId} status={selectedTournament.status} />
+                    )}
+                    <span className="text-[10px] text-surface-500 font-bold uppercase tracking-tighter">Rankings</span>
+                  </div>
                 </div>
                 
                 <div className="divide-y divide-surface-700/50 max-h-[600px] overflow-y-auto no-scrollbar">

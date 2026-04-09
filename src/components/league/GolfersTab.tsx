@@ -5,7 +5,7 @@ import { supabase } from '../../lib/supabase'
 import type { League, Team } from '../../services/leagueService'
 import { useAuth } from '../../context/AuthContext'
 import { tournamentService } from '../../services/tournamentService'
-
+import LiveIndicator from '../ui/LiveIndicator'
 interface GolfersTabProps {
   league: League
   teams: Team[]
@@ -33,7 +33,7 @@ export default function GolfersTab({ league, teams }: GolfersTabProps) {
   const [sortDesc, setSortDesc] = useState(false)
   const [myRoster, setMyRoster] = useState<RosterGolfer[]>([])
   const [tournamentFields, setTournamentFields] = useState<Record<string, Set<string>>>({})
-  const [availableTournaments, setAvailableTournaments] = useState<{id: string, name: string}[]>([])
+  const [availableTournaments, setAvailableTournaments] = useState<{id: string, name: string, status: string}[]>([])
   const [selectedTournamentId, setSelectedTournamentId] = useState<string>('all')
   const [showDropModal, setShowDropModal] = useState<string | null>(null)
   const [isDropping, setIsDropping] = useState(false)
@@ -106,7 +106,7 @@ export default function GolfersTab({ league, teams }: GolfersTabProps) {
       setTournamentFields(fieldMap)
       
       const scrapedIds = Object.keys(fieldMap)
-      const available = tData.filter(t => scrapedIds.includes(t.id))
+      const available = tData.filter(t => scrapedIds.includes(t.id)).map(t => ({ id: t.id, name: t.name, status: t.status }))
       setAvailableTournaments(available)
 
       // Only auto-select on initial load, not on every loadData re-run
@@ -373,6 +373,8 @@ export default function GolfersTab({ league, teams }: GolfersTabProps) {
 
   if (loading) return <div className="p-8 text-center text-surface-400">Loading golfers...</div>
 
+  const selectedTStatus = selectedTournamentId !== 'all' ? availableTournaments.find(t => t.id === selectedTournamentId)?.status : null
+
   return (
     <div className="space-y-6">
       <div className="bg-surface-800/40 border border-surface-700/50 rounded-xl p-6 shadow-lg">
@@ -380,6 +382,9 @@ export default function GolfersTab({ league, teams }: GolfersTabProps) {
           <div>
             <h2 className="font-display font-bold text-2xl text-surface-100 flex items-center gap-3">
               <span className="text-primary-400">⛳</span> All Golfers
+              {selectedTournamentId !== 'all' && selectedTStatus && (
+                <LiveIndicator tournamentId={selectedTournamentId} status={selectedTStatus} />
+              )}
             </h2>
             <p className="text-surface-400 text-sm mt-1">
               Season stats across all tournaments.

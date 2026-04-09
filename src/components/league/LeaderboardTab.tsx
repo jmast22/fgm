@@ -5,6 +5,7 @@ import { tournamentService } from '../../services/tournamentService'
 import type { Tournament } from '../../services/tournamentService'
 import type { League } from '../../services/leagueService'
 import { supabase } from '../../lib/supabase'
+import LiveIndicator from '../ui/LiveIndicator'
 
 interface LeaderboardTabProps {
   league: League
@@ -75,9 +76,7 @@ export default function LeaderboardTab({ league }: LeaderboardTabProps) {
     loadTeamRosters()
   }, [league.id])
 
-  const [isLive, setIsLive] = useState(false)
 
-  // Load scores when tournament changes
   useEffect(() => {
     if (!selectedTournamentId) return
 
@@ -140,13 +139,10 @@ export default function LeaderboardTab({ league }: LeaderboardTabProps) {
           }
         }
       )
-      .subscribe((status) => {
-        setIsLive(status === 'SUBSCRIBED')
-      })
+      .subscribe()
 
     return () => {
       supabase.removeChannel(channel)
-      setIsLive(false)
     }
   }, [selectedTournamentId, league.id])
 
@@ -183,12 +179,7 @@ export default function LeaderboardTab({ league }: LeaderboardTabProps) {
 
         {selectedTournament && (
           <div className="flex items-center gap-3 text-xs">
-            {isLive && (
-              <span className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-green-500/10 border border-green-500/20">
-                <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
-                <span className="text-[9px] text-green-400 font-black uppercase tracking-widest">Live</span>
-              </span>
-            )}
+
             <span className={`px-2 py-1 rounded-lg font-black uppercase tracking-widest text-[9px] border ${
               selectedTournament.status === 'active' 
                 ? 'bg-green-500/10 text-green-400 border-green-500/20' 
@@ -219,7 +210,12 @@ export default function LeaderboardTab({ league }: LeaderboardTabProps) {
                 <h3 className="text-xs font-black text-surface-300 uppercase tracking-widest flex items-center gap-2">
                   <span className="text-primary-400">🏆</span> Team Standings
                 </h3>
-                <span className="text-[10px] text-surface-500 font-bold uppercase tracking-tighter">Round Scoring</span>
+                <div className="flex items-center gap-3">
+                  {selectedTournament && (
+                    <LiveIndicator tournamentId={selectedTournamentId} status={selectedTournament.status} />
+                  )}
+                  <span className="text-[10px] text-surface-500 font-bold uppercase tracking-tighter">Round Scoring</span>
+                </div>
               </div>
 
               {/* Header Row */}
@@ -292,7 +288,7 @@ export default function LeaderboardTab({ league }: LeaderboardTabProps) {
                     : 'Individual Golfers'
                   }
                 </h3>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-3">
                   {selectedTeamFilter && (
                     <button
                       onClick={() => setSelectedTeamFilter(null)}
@@ -300,6 +296,9 @@ export default function LeaderboardTab({ league }: LeaderboardTabProps) {
                     >
                       ✕ Clear Filter
                     </button>
+                  )}
+                  {selectedTournament && (
+                    <LiveIndicator tournamentId={selectedTournamentId} status={selectedTournament.status} />
                   )}
                   <span className="text-[10px] text-surface-500 font-bold uppercase tracking-tighter">{displayGolfers.length} golfers</span>
                 </div>
