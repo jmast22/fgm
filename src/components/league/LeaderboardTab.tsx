@@ -219,13 +219,13 @@ export default function LeaderboardTab({ league }: LeaderboardTabProps) {
               </div>
 
               {/* Header Row */}
-              <div className="grid grid-cols-[auto_1fr_repeat(5,_minmax(36px,48px))] items-center px-4 py-2 border-b border-surface-700/50 bg-surface-900/30">
+              <div className="grid grid-cols-[auto_1fr_48px] md:grid-cols-[auto_1fr_repeat(5,_minmax(36px,48px))] items-center px-4 py-2 border-b border-surface-700/50 bg-surface-900/30">
                 <div className="w-7 text-[9px] font-black text-surface-600 uppercase tracking-widest">#</div>
                 <div className="text-[9px] font-black text-surface-600 uppercase tracking-widest">Team</div>
-                <div className="text-center text-[9px] font-black text-surface-600 uppercase tracking-widest">R1</div>
-                <div className="text-center text-[9px] font-black text-surface-600 uppercase tracking-widest">R2</div>
-                <div className="text-center text-[9px] font-black text-surface-600 uppercase tracking-widest">R3</div>
-                <div className="text-center text-[9px] font-black text-surface-600 uppercase tracking-widest">R4</div>
+                <div className="hidden md:block text-center text-[9px] font-black text-surface-600 uppercase tracking-widest">R1</div>
+                <div className="hidden md:block text-center text-[9px] font-black text-surface-600 uppercase tracking-widest">R2</div>
+                <div className="hidden md:block text-center text-[9px] font-black text-surface-600 uppercase tracking-widest">R3</div>
+                <div className="hidden md:block text-center text-[9px] font-black text-surface-600 uppercase tracking-widest">R4</div>
                 <div className="text-center text-[9px] font-black text-surface-600 uppercase tracking-widest">TOT</div>
               </div>
 
@@ -236,35 +236,57 @@ export default function LeaderboardTab({ league }: LeaderboardTabProps) {
                     <div
                       key={team.team_id}
                       onClick={() => setSelectedTeamFilter(isSelected ? null : team.team_id)}
-                      className={`grid grid-cols-[auto_1fr_repeat(5,_minmax(36px,48px))] items-center px-4 py-3 transition-colors group cursor-pointer ${
+                      className={`transition-colors group cursor-pointer ${
                         isSelected 
                           ? 'bg-primary-500/10 border-l-2 border-l-primary-500' 
                           : 'hover:bg-surface-800/50'
                       }`}
                     >
-                      <div className={`w-7 h-7 rounded-lg border flex items-center justify-center text-[10px] font-black transition-colors ${
-                        isSelected 
-                          ? 'bg-primary-600 border-primary-500 text-surface-900' 
-                          : 'bg-surface-900 border-surface-700 text-surface-500 group-hover:border-primary-500/30 group-hover:text-primary-400'
-                      }`}>
-                        {idx + 1}
-                      </div>
-                      <div className="pl-2">
-                        <div className={`font-bold text-sm transition-colors truncate ${
-                          isSelected ? 'text-primary-400' : 'text-surface-100 group-hover:text-primary-400'
-                        }`}>{team.team_name}</div>
-                        <div className="text-[9px] text-surface-500">
-                          {team.golfer_scores.length > 0 
-                            ? `${team.golfer_scores.length} starters` 
-                            : 'No lineup set'}
+                      <div className="grid grid-cols-[auto_1fr_48px] md:grid-cols-[auto_1fr_repeat(5,_minmax(36px,48px))] items-center px-4 pt-3 pb-1 md:py-3 gap-2">
+                        <div className={`w-7 h-7 rounded-lg border flex items-center justify-center text-[10px] font-black transition-colors ${
+                          isSelected 
+                            ? 'bg-primary-600 border-primary-500 text-surface-900' 
+                            : 'bg-surface-900 border-surface-700 text-surface-500 group-hover:border-primary-500/30 group-hover:text-primary-400'
+                        }`}>
+                          {idx + 1}
+                        </div>
+                        <div className="pl-2">
+                          <div className={`font-bold text-sm transition-colors truncate ${
+                            isSelected ? 'text-primary-400' : 'text-surface-100 group-hover:text-primary-400'
+                          }`}>{team.team_name}</div>
+                          <div className="text-[9px] text-surface-500">
+                            {team.golfer_scores.length > 0 
+                              ? `${team.golfer_scores.length} starters` 
+                              : 'No lineup set'}
+                          </div>
+                        </div>
+                        <div className={`hidden md:block text-center text-xs font-bold ${scoreColor(team.r1)}`}>{formatScore(team.r1)}</div>
+                        <div className={`hidden md:block text-center text-xs font-bold ${scoreColor(team.r2)}`}>{formatScore(team.r2)}</div>
+                        <div className={`hidden md:block text-center text-xs font-bold ${scoreColor(team.r3)}`}>{formatScore(team.r3)}</div>
+                        <div className={`hidden md:block text-center text-xs font-bold ${scoreColor(team.r4)}`}>{formatScore(team.r4)}</div>
+                        <div className={`text-center text-sm font-black font-display ${scoreColor(team.total)}`}>
+                          {formatScore(team.total)}
                         </div>
                       </div>
-                      <div className={`text-center text-xs font-bold ${scoreColor(team.r1)}`}>{formatScore(team.r1)}</div>
-                      <div className={`text-center text-xs font-bold ${scoreColor(team.r2)}`}>{formatScore(team.r2)}</div>
-                      <div className={`text-center text-xs font-bold ${scoreColor(team.r3)}`}>{formatScore(team.r3)}</div>
-                      <div className={`text-center text-xs font-bold ${scoreColor(team.r4)}`}>{formatScore(team.r4)}</div>
-                      <div className={`text-center text-sm font-black font-display ${scoreColor(team.total)}`}>
-                        {formatScore(team.total)}
+
+                      {/* Mobile Round Breakdown for Teams */}
+                      <div className="md:hidden flex justify-end px-4 pb-3 -mt-1 gap-3">
+                        <div className="flex flex-col items-center">
+                          <span className="text-[7px] text-surface-600 font-bold uppercase">R1</span>
+                          <span className={`text-[10px] font-bold ${scoreColor(team.r1)}`}>{formatScore(team.r1)}</span>
+                        </div>
+                        <div className="flex flex-col items-center">
+                          <span className="text-[7px] text-surface-600 font-bold uppercase">R2</span>
+                          <span className={`text-[10px] font-bold ${scoreColor(team.r2)}`}>{formatScore(team.r2)}</span>
+                        </div>
+                        <div className="flex flex-col items-center">
+                          <span className="text-[7px] text-surface-600 font-bold uppercase">R3</span>
+                          <span className={`text-[10px] font-bold ${scoreColor(team.r3)}`}>{formatScore(team.r3)}</span>
+                        </div>
+                        <div className="flex flex-col items-center">
+                          <span className="text-[7px] text-surface-600 font-bold uppercase">R4</span>
+                          <span className={`text-[10px] font-bold ${scoreColor(team.r4)}`}>{formatScore(team.r4)}</span>
+                        </div>
                       </div>
                     </div>
                   )
@@ -305,13 +327,13 @@ export default function LeaderboardTab({ league }: LeaderboardTabProps) {
               </div>
 
               {/* Header Row */}
-              <div className="grid grid-cols-[auto_1fr_repeat(5,_minmax(40px,56px))_auto] items-center px-4 py-2 border-b border-surface-700/50 bg-surface-900/30">
+              <div className="grid grid-cols-[auto_1fr_48px_24px] md:grid-cols-[auto_1fr_repeat(5,_minmax(40px,56px))_auto] items-center px-4 py-2 border-b border-surface-700/50 bg-surface-900/30">
                 <div className="w-7 text-[9px] font-black text-surface-600 uppercase tracking-widest">#</div>
                 <div className="text-[9px] font-black text-surface-600 uppercase tracking-widest">Golfer</div>
-                <div className="text-center text-[9px] font-black text-surface-600 uppercase tracking-widest">R1</div>
-                <div className="text-center text-[9px] font-black text-surface-600 uppercase tracking-widest">R2</div>
-                <div className="text-center text-[9px] font-black text-surface-600 uppercase tracking-widest">R3</div>
-                <div className="text-center text-[9px] font-black text-surface-600 uppercase tracking-widest">R4</div>
+                <div className="hidden md:block text-center text-[9px] font-black text-surface-600 uppercase tracking-widest">R1</div>
+                <div className="hidden md:block text-center text-[9px] font-black text-surface-600 uppercase tracking-widest">R2</div>
+                <div className="hidden md:block text-center text-[9px] font-black text-surface-600 uppercase tracking-widest">R3</div>
+                <div className="hidden md:block text-center text-[9px] font-black text-surface-600 uppercase tracking-widest">R4</div>
                 <div className="text-center text-[9px] font-black text-surface-600 uppercase tracking-widest">TOT</div>
                 <div className="w-6"></div>
               </div>
@@ -320,40 +342,83 @@ export default function LeaderboardTab({ league }: LeaderboardTabProps) {
                 {displayGolfers.length > 0 ? displayGolfers.map((golfer, idx) => {
                   const teamName = golferTeamMap[golfer.golfer_id]
                   return (
-                    <div key={golfer.golfer_id}>
+                    <div key={golfer.golfer_id} className="group">
                       <div
                         onClick={() => setExpandedGolfer(expandedGolfer === golfer.golfer_id ? null : golfer.golfer_id)}
-                        className="grid grid-cols-[auto_1fr_repeat(5,_minmax(40px,56px))_auto] items-center px-4 py-3 hover:bg-surface-800/50 transition-colors group cursor-pointer"
+                        className="hover:bg-surface-800/50 transition-colors cursor-pointer"
                       >
-                        <div className="w-7 h-7 rounded-lg bg-surface-900 border border-surface-700 flex items-center justify-center text-[10px] font-black text-surface-500 group-hover:border-primary-500/30 group-hover:text-primary-400 transition-colors">
-                          {idx + 1}
-                        </div>
-                        <div className="pl-2 min-w-0">
-                          <div className="font-bold text-sm text-surface-100 group-hover:text-primary-400 transition-colors truncate flex items-center gap-2">
-                            {golfer.golfer_name}
-                            {!golfer.made_cut && (
-                              <span className="text-[8px] bg-red-500/10 text-red-400 border border-red-500/20 px-1.5 py-0.5 rounded font-black uppercase tracking-widest shrink-0">MC</span>
+                        {/* Main Info Row */}
+                        <div className="grid grid-cols-[auto_1fr_48px_24px] md:grid-cols-[auto_1fr_repeat(5,_minmax(40px,56px))_auto] items-center px-4 pt-3 pb-1 md:py-3">
+                          <div className="w-7 h-7 rounded-lg bg-surface-900 border border-surface-700 flex items-center justify-center text-[10px] font-black text-surface-500 group-hover:border-primary-500/30 group-hover:text-primary-400 transition-colors">
+                            {idx + 1}
+                          </div>
+                          <div className="pl-2 min-w-0">
+                            <div className="font-bold text-sm text-surface-100 group-hover:text-primary-400 transition-colors truncate flex items-center gap-2">
+                              {golfer.golfer_name}
+                              {!golfer.made_cut && (
+                                <span className="text-[8px] bg-red-500/10 text-red-400 border border-red-500/20 px-1.5 py-0.5 rounded font-black uppercase tracking-widest shrink-0">MC</span>
+                              )}
+                            </div>
+                            {/* Team Name - Desktop only here */}
+                            {teamName && (
+                              <div className="hidden md:block text-[9px] text-surface-500 truncate mt-0.5">
+                                <span className="text-amber-400/70">{teamName}</span>
+                              </div>
                             )}
                           </div>
-                          {teamName && (
-                            <div className="text-[9px] text-surface-500 truncate">
-                              <span className="text-amber-400/70">{teamName}</span>
+
+                          {/* Round Scores - Desktop only */}
+                          <div className={`hidden md:block text-center text-xs font-bold ${scoreColor(golfer.r1)}`}>{formatScore(golfer.r1)}</div>
+                          <div className={`hidden md:block text-center text-xs font-bold ${scoreColor(golfer.r2)}`}>{formatScore(golfer.r2)}</div>
+                          <div className={`hidden md:block text-center text-xs font-bold ${golfer.is_penalty ? 'text-red-400/60 italic' : scoreColor(golfer.r3)}`}>
+                            {formatScore(golfer.r3)}{golfer.is_penalty ? '*' : ''}
+                          </div>
+                          <div className={`hidden md:block text-center text-xs font-bold ${golfer.is_penalty ? 'text-red-400/60 italic' : scoreColor(golfer.r4)}`}>
+                            {formatScore(golfer.r4)}{golfer.is_penalty ? '*' : ''}
+                          </div>
+
+                          {/* Total Score - Always visible */}
+                          <div className={`text-center text-sm font-black font-display ${scoreColor(golfer.total)}`}>
+                            {formatScore(golfer.total)}
+                          </div>
+
+                          {/* Expand Arrow */}
+                          <div className="w-6 flex items-center justify-center text-surface-600 group-hover:text-surface-400 transition-colors">
+                            <span className={`text-xs transition-transform duration-200 ${expandedGolfer === golfer.golfer_id ? 'rotate-180' : ''}`}>▼</span>
+                          </div>
+                        </div>
+
+                        {/* Mobile Sub-Row: Rounds & Team */}
+                        <div className="md:hidden flex items-center justify-between px-4 pb-3 -mt-1 ml-9 border-b border-surface-700/30 border-dashed mr-4">
+                          <div className="min-w-0 flex-1">
+                            {teamName && (
+                              <div className="text-[10px] text-amber-400/80 font-medium truncate uppercase tracking-tight">
+                                {teamName}
+                              </div>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-3 pr-2">
+                            <div className="flex flex-col items-center">
+                              <span className="text-[7px] text-surface-600 font-bold uppercase tracking-tighter">R1</span>
+                              <span className={`text-[10px] font-bold ${scoreColor(golfer.r1)}`}>{formatScore(golfer.r1)}</span>
                             </div>
-                          )}
-                        </div>
-                        <div className={`text-center text-xs font-bold ${scoreColor(golfer.r1)}`}>{formatScore(golfer.r1)}</div>
-                        <div className={`text-center text-xs font-bold ${scoreColor(golfer.r2)}`}>{formatScore(golfer.r2)}</div>
-                        <div className={`text-center text-xs font-bold ${golfer.is_penalty ? 'text-red-400/60 italic' : scoreColor(golfer.r3)}`}>
-                          {formatScore(golfer.r3)}{golfer.is_penalty ? '*' : ''}
-                        </div>
-                        <div className={`text-center text-xs font-bold ${golfer.is_penalty ? 'text-red-400/60 italic' : scoreColor(golfer.r4)}`}>
-                          {formatScore(golfer.r4)}{golfer.is_penalty ? '*' : ''}
-                        </div>
-                        <div className={`text-center text-sm font-black font-display ${scoreColor(golfer.total)}`}>
-                          {formatScore(golfer.total)}
-                        </div>
-                        <div className="w-6 flex items-center justify-center text-surface-600 group-hover:text-surface-400 transition-colors">
-                          <span className={`text-xs transition-transform duration-200 ${expandedGolfer === golfer.golfer_id ? 'rotate-180' : ''}`}>▼</span>
+                            <div className="flex flex-col items-center">
+                              <span className="text-[7px] text-surface-600 font-bold uppercase tracking-tighter">R2</span>
+                              <span className={`text-[10px] font-bold ${scoreColor(golfer.r2)}`}>{formatScore(golfer.r2)}</span>
+                            </div>
+                            <div className="flex flex-col items-center">
+                              <span className="text-[7px] text-surface-600 font-bold uppercase tracking-tighter">R3</span>
+                              <span className={`text-[10px] font-bold ${golfer.is_penalty ? 'text-red-400/60' : scoreColor(golfer.r3)}`}>
+                                {formatScore(golfer.r3)}{golfer.is_penalty ? '*' : ''}
+                              </span>
+                            </div>
+                            <div className="flex flex-col items-center">
+                              <span className="text-[7px] text-surface-600 font-bold uppercase tracking-tighter">R4</span>
+                              <span className={`text-[10px] font-bold ${golfer.is_penalty ? 'text-red-400/60' : scoreColor(golfer.r4)}`}>
+                                {formatScore(golfer.r4)}{golfer.is_penalty ? '*' : ''}
+                              </span>
+                            </div>
+                          </div>
                         </div>
                       </div>
 
