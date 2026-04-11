@@ -28,7 +28,6 @@ interface TournamentPayout {
 export default function PayoutsTab({ league, teams, isCommish }: PayoutsTabProps) {
   const [tournaments, setTournaments] = useState<Tournament[]>([])
   const [payoutData, setPayoutData] = useState<Record<string, TournamentPayout>>({})
-  const [history, setHistory] = useState<Record<string, any>>({})
   const [loading, setLoading] = useState(true)
   const [finalizing, setFinalizing] = useState<string | null>(null)
   const [expandedId, setExpandedId] = useState<string | null>(null)
@@ -43,7 +42,6 @@ export default function PayoutsTab({ league, teams, isCommish }: PayoutsTabProps
 
       const histMap: Record<string, any> = {}
       historyData?.forEach(h => { histMap[h.tournament_id] = h })
-      setHistory(histMap)
 
       const relevantTourneys = tData.filter(t => t.status !== 'upcoming' && !(league.excluded_tournaments || []).includes(t.id))
       setTournaments(relevantTourneys)
