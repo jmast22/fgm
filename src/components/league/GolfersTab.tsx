@@ -337,7 +337,11 @@ export default function GolfersTab({ league, teams }: GolfersTabProps) {
   displayGolfers.sort((a, b) => {
     let result = 0;
     if (sortBy === 'rank') result = (a.owg_rank || 9999) - (b.owg_rank || 9999)
-    else if (sortBy === 'score') result = a.total_score - b.total_score // lower is better
+    else if (sortBy === 'score') {
+      const aVal = a.total_score ?? 9999;
+      const bVal = b.total_score ?? 9999;
+      result = aVal - bVal;
+    }
     else if (sortBy === 'odds') result = (a.odds || 99999) - (b.odds || 99999)
     else result = a.name.localeCompare(b.name)
 
