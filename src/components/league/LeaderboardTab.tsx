@@ -190,9 +190,9 @@ export default function LeaderboardTab({ league }: LeaderboardTabProps) {
           Loading leaderboard...
         </div>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {/* Left Panel: Team Standings */}
-          <div className="lg:col-span-2">
+          <div className="lg:col-span-1">
             <div className="bg-surface-800/40 border border-surface-700/50 rounded-xl overflow-hidden shadow-lg">
               <div className="p-4 border-b border-surface-700/50 bg-surface-900/20 flex items-center justify-between">
                 <h3 className="text-xs font-black text-surface-300 uppercase tracking-widest flex items-center gap-2">
@@ -209,7 +209,7 @@ export default function LeaderboardTab({ league }: LeaderboardTabProps) {
               {/* Header Row */}
               <div className="grid grid-cols-[auto_1fr_48px] md:grid-cols-[auto_1fr_repeat(5,_minmax(36px,48px))] items-center px-4 py-2 border-b border-surface-700/50 bg-surface-900/30">
                 <div className="w-7 text-[9px] font-black text-surface-600 uppercase tracking-widest">#</div>
-                <div className="text-[9px] font-black text-surface-600 uppercase tracking-widest">Team</div>
+                <div className="pl-2 text-[9px] font-black text-surface-600 uppercase tracking-widest">Team</div>
                 <div className="hidden md:block text-center text-[9px] font-black text-surface-600 uppercase tracking-widest">R1</div>
                 <div className="hidden md:block text-center text-[9px] font-black text-surface-600 uppercase tracking-widest">R2</div>
                 <div className="hidden md:block text-center text-[9px] font-black text-surface-600 uppercase tracking-widest">R3</div>
@@ -230,7 +230,7 @@ export default function LeaderboardTab({ league }: LeaderboardTabProps) {
                           : 'hover:bg-surface-800/50'
                       }`}
                     >
-                      <div className="grid grid-cols-[auto_1fr_48px] md:grid-cols-[auto_1fr_repeat(5,_minmax(36px,48px))] items-center px-4 pt-3 pb-1 md:py-3 gap-2">
+                      <div className="grid grid-cols-[auto_1fr_48px] md:grid-cols-[auto_1fr_repeat(5,_minmax(36px,48px))] items-center px-4 pt-3 pb-1 md:py-3">
                         <div className={`w-7 h-7 rounded-lg border flex items-center justify-center text-[10px] font-black transition-colors ${
                           isSelected 
                             ? 'bg-primary-600 border-primary-500 text-surface-900' 
@@ -288,7 +288,7 @@ export default function LeaderboardTab({ league }: LeaderboardTabProps) {
           </div>
 
           {/* Right Panel: Individual Golfer Scores */}
-          <div className="lg:col-span-3">
+          <div className="lg:col-span-1">
             <div className="bg-surface-800/40 border border-surface-700/50 rounded-xl overflow-hidden shadow-lg">
               <div className="p-4 border-b border-surface-700/50 bg-surface-900/20 flex items-center justify-between">
                 <h3 className="text-xs font-black text-surface-300 uppercase tracking-widest flex items-center gap-2">
@@ -317,7 +317,7 @@ export default function LeaderboardTab({ league }: LeaderboardTabProps) {
               {/* Header Row */}
               <div className="grid grid-cols-[auto_1fr_48px_24px] md:grid-cols-[auto_1fr_repeat(5,_minmax(40px,56px))_auto] items-center px-4 py-2 border-b border-surface-700/50 bg-surface-900/30">
                 <div className="w-7 text-[9px] font-black text-surface-600 uppercase tracking-widest">#</div>
-                <div className="text-[9px] font-black text-surface-600 uppercase tracking-widest">Golfer</div>
+                <div className="pl-2 text-[9px] font-black text-surface-600 uppercase tracking-widest">Golfer</div>
                 <div className="hidden md:block text-center text-[9px] font-black text-surface-600 uppercase tracking-widest">R1</div>
                 <div className="hidden md:block text-center text-[9px] font-black text-surface-600 uppercase tracking-widest">R2</div>
                 <div className="hidden md:block text-center text-[9px] font-black text-surface-600 uppercase tracking-widest">R3</div>

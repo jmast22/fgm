@@ -17,7 +17,7 @@ export interface GolferTournamentScore {
   r2: number | null
   r3: number | null
   r4: number | null
-  total: number
+  total: number | null
   made_cut: boolean
   is_penalty: boolean  // true if R3/R4 are penalty scores
 }
@@ -25,11 +25,11 @@ export interface GolferTournamentScore {
 export interface TeamTournamentScore {
   team_id: string
   team_name: string
-  r1: number
-  r2: number
-  r3: number
-  r4: number
-  total: number
+  r1: number | null
+  r2: number | null
+  r3: number | null
+  r4: number | null
+  total: number | null
   golfer_scores: GolferTournamentScore[]
 }
 
@@ -158,7 +158,9 @@ export const scoringService = {
         isPenalty = true
       }
 
-      const total = (r1 ?? 0) + (r2 ?? 0) + (r3 ?? 0) + (r4 ?? 0)
+      const total = (r1 !== null || r2 !== null || r3 !== null || r4 !== null)
+        ? (r1 ?? 0) + (r2 ?? 0) + (r3 ?? 0) + (r4 ?? 0)
+        : null
 
       return {
         golfer_id: golferId,
@@ -173,8 +175,12 @@ export const scoringService = {
       }
     })
 
-    // Sort by total (lowest = best in golf, since negative is under par)
-    results.sort((a, b) => a.total - b.total)
+    // Sort by total (lowest = best)
+    results.sort((a, b) => {
+      if (a.total === null) return 1
+      if (b.total === null) return -1
+      return a.total - b.total
+    })
 
     return results
   },
@@ -198,7 +204,7 @@ export const scoringService = {
       return teams.map(t => ({
         team_id: t.id,
         team_name: t.team_name,
-        r1: 0, r2: 0, r3: 0, r4: 0, total: 0,
+        r1: null, r2: null, r3: null, r4: null, total: null,
         golfer_scores: []
       }))
     }
@@ -237,30 +243,41 @@ export const scoringService = {
       const starterIds = lineupId ? (lineupGolfersMap[lineupId] || []) : []
 
       const starterScores: GolferTournamentScore[] = []
-      let r1 = 0, r2 = 0, r3 = 0, r4 = 0
+      let r1: number | null = null
+      let r2: number | null = null
+      let r3: number | null = null
+      let r4: number | null = null
 
       starterIds.forEach(sid => {
         const gs = golferMap.get(sid)
         if (gs) {
           starterScores.push(gs)
-          r1 += gs.r1 ?? 0
-          r2 += gs.r2 ?? 0
-          r3 += gs.r3 ?? 0
-          r4 += gs.r4 ?? 0
+          if (gs.r1 !== null) r1 = (r1 ?? 0) + gs.r1
+          if (gs.r2 !== null) r2 = (r2 ?? 0) + gs.r2
+          if (gs.r3 !== null) r3 = (r3 ?? 0) + gs.r3
+          if (gs.r4 !== null) r4 = (r4 ?? 0) + gs.r4
         }
       })
+
+      const total = (r1 !== null || r2 !== null || r3 !== null || r4 !== null)
+        ? (r1 ?? 0) + (r2 ?? 0) + (r3 ?? 0) + (r4 ?? 0)
+        : null
 
       return {
         team_id: team.id,
         team_name: team.team_name,
         r1, r2, r3, r4,
-        total: r1 + r2 + r3 + r4,
+        total,
         golfer_scores: starterScores
       }
     })
 
     // Sort by total (lowest = best, most negative under par)
-    teamResults.sort((a, b) => a.total - b.total)
+    teamResults.sort((a, b) => {
+      if (a.total === null) return 1
+      if (b.total === null) return -1
+      return a.total - b.total
+    })
 
     return teamResults
   },
@@ -385,7 +402,7 @@ export const scoringService = {
         starterIds.forEach(sid => {
           const gs = tourneyBoard.get(sid)
           if (gs) {
-            tourneyTotal += gs.total
+            tourneyTotal += (gs.total ?? 0)
             hasStarter = true
           }
         })
@@ -447,7 +464,7 @@ export const scoringService = {
             tournaments: 0
           }
         }
-        golferAgg[gs.golfer_id].totalScore += gs.total
+        golferAgg[gs.golfer_id].totalScore += (gs.total ?? 0)
         golferAgg[gs.golfer_id].rounds += [gs.r1, gs.r2, gs.r3, gs.r4].filter(r => r !== null).length
         golferAgg[gs.golfer_id].tournaments++
       })
@@ -472,7 +489,7 @@ export const scoringService = {
  * Negative = under par (good), positive = over par (bad).
  */
 export function formatScore(score: number | null): string {
-  if (score === null) return '—'
+  if (score === null) return '-'
   if (score === 0) return 'E'
   return score > 0 ? `+${score}` : `${score}`
 }

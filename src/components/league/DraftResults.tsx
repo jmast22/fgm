@@ -176,8 +176,8 @@ export default function DraftResults({ league, teams, onBack }: DraftResultsProp
               const isOnline = team?.user_id && onlineUserIds.has(team.user_id);
               
               return (
-                <div key={teamId} className={`flex-1 min-w-[160px] p-4 text-center border-r border-surface-700 last:border-r-0 transition-all ${isOnline ? 'bg-primary-500/10' : 'opacity-40 grayscale'}`}>
-                  <div className={`text-[11px] font-bold truncate mb-1 ${isOnline ? 'text-primary-400' : 'text-surface-400'}`}>
+                <div key={teamId} className={`flex-1 min-w-[110px] px-2 py-4 text-center border-r border-surface-700 last:border-r-0 transition-all ${isOnline ? 'bg-primary-500/10' : 'opacity-40 grayscale'}`}>
+                  <div className={`text-[10px] font-black uppercase tracking-tight truncate mb-1 ${isOnline ? 'text-primary-400' : 'text-surface-400'}`}>
                     {team?.team_name || 'Team'}
                   </div>
                   <div className="flex items-center justify-center gap-1.5 mt-0.5">
@@ -203,9 +203,9 @@ export default function DraftResults({ league, teams, onBack }: DraftResultsProp
                   return (
                     <div 
                       key={`${roundNum}-${teamId}`} 
-                      className="flex-1 min-w-[160px] p-3 border-r border-surface-700 last:border-r-0 bg-surface-800/10"
+                      className="flex-1 min-w-[110px] p-2 border-r border-surface-700 last:border-r-0 bg-surface-800/10"
                     >
-                      <div className="flex justify-between items-start mb-2">
+                      <div className="flex justify-between items-start mb-1.5">
                         <span className="text-[10px] font-mono font-bold text-surface-600">{roundNum}.{displayIndex + 1}</span>
                         <span className="text-[9px] px-1 bg-surface-700/50 rounded text-surface-500">#{pickNumber}</span>
                       </div>
@@ -215,8 +215,18 @@ export default function DraftResults({ league, teams, onBack }: DraftResultsProp
                           className={isCommish && !draft.is_locked ? "cursor-pointer group relative bg-surface-800/50 p-1.5 -m-1.5 rounded" : ""}
                           onClick={() => isCommish && !draft.is_locked && handleEditClick(pick)}
                         >
-                          <div className={`text-[11px] font-bold leading-tight uppercase line-clamp-2 ${isCommish && !draft.is_locked ? 'text-surface-100 group-hover:text-primary-400 transition-colors' : 'text-primary-400'}`}>
-                             {(pick as any).golfer?.name || '⚠️ BLANK SLOT'}
+                          <div className={`text-[10px] font-black leading-none uppercase ${isCommish && !draft.is_locked ? 'text-surface-100 group-hover:text-primary-400 transition-colors' : 'text-primary-400'}`}>
+                             {(() => {
+                               const fullName = (pick as any).golfer?.name;
+                               if (!fullName) return <span className="text-orange-400/50">WAITING</span>;
+                               const parts = fullName.split(' ');
+                               return (
+                                 <div className="space-y-0.5">
+                                   <div className="opacity-60 font-medium text-[9px]">{parts[0]}</div>
+                                   <div className="truncate">{parts.slice(1).join(' ')}</div>
+                                 </div>
+                               );
+                             })()}
                           </div>
                           {isCommish && !draft.is_locked && (
                             <div className="absolute -top-3 -right-2 hidden group-hover:flex items-center justify-center w-5 h-5 bg-primary-600 rounded-full text-surface-900 text-[10px] shadow-lg">
