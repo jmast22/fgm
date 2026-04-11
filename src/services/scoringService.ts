@@ -142,11 +142,27 @@ export const scoringService = {
         }
       }
       byGolfer[s.golfer_id].rounds[s.round] = s.score
-      if (s.made_cut) byGolfer[s.golfer_id].made_cut = true
+      // If any round record says they missed the cut, we mark it false globally for the golfer.
+      // We prioritize the false status (confirmed missed cut).
+      if (s.made_cut === false) byGolfer[s.golfer_id].made_cut = false;
+      // If we haven't seen a false yet, and this one is true, we can set it to true.
+      else if (byGolfer[s.golfer_id].made_cut !== false && s.made_cut === true) {
+        byGolfer[s.golfer_id].made_cut = true;
+      }
     })
 
     // Calculate penalties
     const penalty = this.calculateMissedCutPenalty(rawScores)
+
+    // Heuristic Cut Line Detection: 
+    // If some players have R3/R4 scores, identify the worst score among them to find the cut threshold.
+    let heuristicCutLine = -Infinity;
+    Object.values(byGolfer).forEach(data => {
+      if (data.rounds[3] !== null || data.rounds[4] !== null) {
+        const totalAfterR2 = (data.rounds[1] ?? 0) + (data.rounds[2] ?? 0);
+        heuristicCutLine = Math.max(heuristicCutLine, totalAfterR2);
+      }
+    });
 
     const results: GolferTournamentScore[] = Object.entries(byGolfer).map(([golferId, data]) => {
       const r1 = data.rounds[1] ?? null
@@ -155,8 +171,18 @@ export const scoringService = {
       let r4 = data.rounds[4] ?? null
       let isPenalty = false
 
+      // Apply Heuristic: If we are past R2 and this player has no R3+ scores while others do,
+      // and their score is worse than the cut line, mark them as missed cut.
+      if (heuristicCutLine > -Infinity && r1 !== null && r2 !== null && r3 === null && r4 === null) {
+        const totalAfterR2 = r1 + r2;
+        if (totalAfterR2 > heuristicCutLine) {
+          data.made_cut = false;
+        }
+      }
+
       // If this golfer missed the cut, apply penalty scores for R3 and R4
-      if (!data.made_cut) {
+      // We only apply this if made_cut is EXPLICITLY false.
+      if (data.made_cut === false) {
         r3 = penalty.r3Penalty
         r4 = penalty.r4Penalty
         isPenalty = true
@@ -174,7 +200,7 @@ export const scoringService = {
         r3,
         r4,
         total,
-        made_cut: data.made_cut,
+        made_cut: (data.made_cut === false) ? false : (data.made_cut === true ? true : null),
         is_penalty: isPenalty
       }
     })

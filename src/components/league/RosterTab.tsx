@@ -591,9 +591,14 @@ function GolferRow({
         </div>
         <div>
           <div className="flex items-center gap-2">
-            <div className="font-bold text-surface-100 group-hover:text-primary-400 transition-colors text-sm">{golfer.name}</div>
+            <div className={`font-bold transition-colors text-sm ${(score?.made_cut === false || score?.is_penalty) ? 'text-red-500 font-bold' : 'text-surface-100 group-hover:text-primary-400'}`}>
+              {golfer.name}
+            </div>
+            {(score?.made_cut === false || score?.is_penalty) && (
+              <span className="text-[8px] bg-red-500/10 text-red-500 border border-red-500/20 px-1.5 py-0.5 rounded font-black uppercase tracking-widest shrink-0">MC</span>
+            )}
             {golfer.is_on_trade_block && (
-              <span className="text-[8px] bg-orange-500/10 text-orange-500 border border-orange-500/20 px-1.5 py-0.5 rounded font-black uppercase tracking-widest">On Block</span>
+              <span className="text-[8px] bg-orange-500/10 text-orange-500 border border-orange-500/20 px-1.5 py-0.5 rounded font-black uppercase tracking-widest whitespace-nowrap">On Block</span>
             )}
           </div>
           <div className="text-[10px] text-surface-500 flex items-center gap-2">

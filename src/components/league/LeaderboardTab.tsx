@@ -321,10 +321,10 @@ export default function LeaderboardTab({ league }: LeaderboardTabProps) {
                             {golfer.displayRank}
                           </div>
                           <div className="pl-2 min-w-0">
-                            <div className="font-bold text-xs md:text-sm text-surface-100 group-hover:text-primary-400 transition-colors truncate flex items-center gap-2">
+                            <div className={`font-bold text-xs md:text-sm transition-colors truncate flex items-center gap-2 ${(golfer.made_cut === false || golfer.is_penalty) ? 'text-red-500 font-bold' : 'text-surface-100 group-hover:text-primary-400'}`}>
                               {golfer.golfer_name}
-                              {!golfer.made_cut && (
-                                <span className="text-[8px] bg-red-500/10 text-red-400 border border-red-500/20 px-1.5 py-0.5 rounded font-black uppercase tracking-widest shrink-0">MC</span>
+                              {(golfer.made_cut === false || golfer.is_penalty) && (
+                                <span className="text-[8px] bg-red-500/10 text-red-500 border border-red-500/20 px-1.5 py-0.5 rounded font-black uppercase tracking-widest shrink-0">MC</span>
                               )}
                             </div>
                             {teamName && (
