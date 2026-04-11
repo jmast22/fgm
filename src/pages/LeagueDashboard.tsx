@@ -12,12 +12,13 @@ import GolfersTab from '../components/league/GolfersTab'
 import TradesTab from '../components/league/TradesTab'
 import LeagueActivity from '../components/league/LeagueActivity'
 import LeaderboardTab from '../components/league/LeaderboardTab'
+import PayoutsTab from '../components/league/PayoutsTab'
 import { scoringService, formatScore, scoreColor } from '../services/scoringService'
 import { tournamentService, type Tournament } from '../services/tournamentService'
 import SpinningWheel from '../components/league/SpinningWheel'
 import LiveIndicator from '../components/ui/LiveIndicator'
 
-type TabId = 'roster' | 'leaderboard' | 'league' | 'draft' | 'settings' | 'schedule' | 'golfers' | 'trades';
+type TabId = 'roster' | 'leaderboard' | 'payouts' | 'league' | 'draft' | 'settings' | 'schedule' | 'golfers' | 'trades';
 
 export default function LeagueDashboard() {
   const { id } = useParams<{ id: string }>()
@@ -37,18 +38,32 @@ export default function LeagueDashboard() {
     weekly_starters: number,
     max_teams: number,
     waiver_rule: string,
-    draft_cycle: 'season' | 'tournament'
+    draft_cycle: 'season' | 'tournament',
+    tournament_cost: number,
+    payout_1st: number,
+    payout_2nd: number,
+    payout_3rd: number,
+    payout_1st_remaining_pot: boolean,
+    payout_2nd_money_back: boolean,
+    payout_3rd_money_back: boolean
   }>({
     name: '',
     roster_size: 10,
     weekly_starters: 6,
     max_teams: 12,
     waiver_rule: 'Free Agency',
-    draft_cycle: 'season'
+    draft_cycle: 'season',
+    tournament_cost: 0,
+    payout_1st: 0,
+    payout_2nd: 0,
+    payout_3rd: 0,
+    payout_1st_remaining_pot: false,
+    payout_2nd_money_back: false,
+    payout_3rd_money_back: false
   })
   const [editTeamNames, setEditTeamNames] = useState<Record<string, string>>({})
   const [editDraftOrder, setEditDraftOrder] = useState<string[]>([])
-  const [settingsTab, setSettingsTab] = useState<'core' | 'scoring' | 'draft' | 'teams'>('core')
+  const [settingsTab, setSettingsTab] = useState<'core' | 'scoring' | 'draft' | 'teams' | 'payouts'>('core')
   const [seasonStandings, setSeasonStandings] = useState<Record<string, { total: number; tournaments_played: number }>>({})
   const [tournaments, setTournaments] = useState<Tournament[]>([])
   const [selectedTournamentId, setSelectedTournamentId] = useState<string>('')
@@ -85,7 +100,14 @@ export default function LeagueDashboard() {
           weekly_starters: l.weekly_starters,
           max_teams: l.max_teams || 12,
           waiver_rule: l.waiver_rule || 'Free Agency',
-          draft_cycle: l.draft_cycle || 'season'
+          draft_cycle: l.draft_cycle || 'season',
+          tournament_cost: l.tournament_cost || 0,
+          payout_1st: l.payout_1st || 0,
+          payout_2nd: l.payout_2nd || 0,
+          payout_3rd: l.payout_3rd || 0,
+          payout_1st_remaining_pot: !!l.payout_1st_remaining_pot,
+          payout_2nd_money_back: !!l.payout_2nd_money_back,
+          payout_3rd_money_back: !!l.payout_3rd_money_back
         })
 
         // Default to the first upcoming or active tournament that is NOT excluded
@@ -343,6 +365,7 @@ export default function LeagueDashboard() {
     { id: 'league', label: 'League', icon: '🏆' },
     { id: 'roster', label: 'Roster', icon: '👤' },
     { id: 'leaderboard', label: 'Leaderboard', icon: '📊' },
+    { id: 'payouts', label: 'Payouts', icon: '💰' },
     { id: 'golfers', label: 'Golfers', icon: '⛳' },
     { id: 'trades', label: 'Trades', icon: '↔️' },
     { id: 'draft', label: 'Draft', icon: '🎯' },
@@ -384,8 +407,8 @@ export default function LeagueDashboard() {
           </div>
         </div>
 
-        {/* Sub-Navigation Bar — horizontal scroll on mobile, grid on desktop */}
-        <div className="mt-3 md:mt-4 flex md:grid md:grid-cols-4 lg:grid-cols-8 gap-1.5 md:gap-2 p-1.5 md:p-2 bg-surface-900/50 border border-surface-700/50 rounded-xl overflow-x-auto no-scrollbar">
+        {/* Sub-Navigation Bar — single row horizontal scroll */}
+        <div className="mt-3 md:mt-4 flex gap-1.5 md:gap-2 p-1.5 md:p-2 bg-surface-900/50 border border-surface-700/50 rounded-xl overflow-x-auto no-scrollbar">
           {tabs.map((tab) => {
             const isActive = activeTab === tab.id
             return (
@@ -583,6 +606,14 @@ export default function LeagueDashboard() {
           />
         )}
 
+        {activeTab === 'payouts' && (
+          <PayoutsTab 
+            league={league} 
+            teams={teams}
+            isCommish={isCommish}
+          />
+        )}
+
         {activeTab === 'golfers' && (
           <GolfersTab 
             league={league} 
@@ -608,7 +639,7 @@ export default function LeagueDashboard() {
 
              <div className="space-y-6 animate-fade-in">
                  <div className="flex border-b border-surface-700/50 gap-4 overflow-x-auto no-scrollbar">
-                   {(['core', 'scoring', 'draft', 'teams'] as const).map(tab => (
+                   {(['core', 'scoring', 'payouts', 'draft', 'teams'] as const).map(tab => (
                      <button
                        key={tab}
                        onClick={(e) => { e.preventDefault(); setSettingsTab(tab); }}
@@ -616,7 +647,7 @@ export default function LeagueDashboard() {
                          settingsTab === tab ? 'border-primary-500 text-primary-400' : 'border-transparent text-surface-500 hover:text-surface-300'
                        }`}
                      >
-                       {tab === 'core' ? 'Core Info' : tab === 'scoring' ? 'Scoring' : tab === 'draft' ? 'Draft Order' : 'Teams'}
+                       {tab === 'core' ? 'Core Info' : tab === 'scoring' ? 'Scoring' : tab === 'payouts' ? 'Payouts' : tab === 'draft' ? 'Draft Order' : 'Teams'}
                      </button>
                    ))}
                  </div>
@@ -830,6 +861,110 @@ export default function LeagueDashboard() {
                            </div>
                          </div>
                        </div>
+                     </div>
+                   )}
+
+                   {settingsTab === 'payouts' && (
+                     <div className="space-y-6 max-w-xl">
+                       <h3 className="text-sm font-black text-surface-500 uppercase tracking-widest mb-4">Payout Settings</h3>
+                       
+                       <div className="bg-surface-900/50 border border-surface-700/50 rounded-2xl p-6 space-y-6">
+                         <div>
+                           <label className="block text-surface-400 text-xs font-bold uppercase tracking-wider mb-2">Tournament Entry Fee ($)</label>
+                           <input 
+                             type="number" 
+                             value={editSettings.tournament_cost}
+                             onChange={e => setEditSettings({...editSettings, tournament_cost: Math.round(parseFloat(e.target.value) || 0)})}
+                             disabled={!isCommish}
+                             className="w-full bg-surface-900 border border-surface-700 rounded-xl px-4 py-3 text-surface-100 focus:ring-2 focus:ring-primary-500/50 outline-none transition-all disabled:opacity-50"
+                           />
+                           <p className="text-[10px] text-surface-500 mt-2 uppercase font-black tracking-tighter">Cost per team for EACH tournament played.</p>
+                         </div>
+
+                         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                           <div className="space-y-3">
+                             <div>
+                               <label className="block text-surface-400 text-[10px] font-bold uppercase tracking-wider mb-2">1st Place ($)</label>
+                               <input 
+                                 type="number" 
+                                 value={editSettings.payout_1st}
+                                 onChange={e => setEditSettings({...editSettings, payout_1st: Math.round(parseFloat(e.target.value) || 0)})}
+                                 disabled={!isCommish || editSettings.payout_1st_remaining_pot}
+                                 className="w-full bg-surface-900 border border-surface-700 rounded-xl px-4 py-3 text-surface-100 disabled:opacity-50"
+                                 placeholder={editSettings.payout_1st_remaining_pot ? "Auto-calculating..." : ""}
+                               />
+                             </div>
+                             <label className="flex items-center gap-2 cursor-pointer group">
+                               <input 
+                                 type="checkbox" 
+                                 checked={editSettings.payout_1st_remaining_pot}
+                                 onChange={e => setEditSettings({...editSettings, payout_1st_remaining_pot: e.target.checked})}
+                                 disabled={!isCommish}
+                                 className="w-4 h-4 rounded bg-surface-900 border-surface-700 text-primary-600 focus:ring-primary-500/50"
+                               />
+                               <span className="text-[10px] font-black uppercase tracking-tighter text-surface-500 group-hover:text-primary-400 transition-colors">Remaining Pot</span>
+                             </label>
+                           </div>
+
+                           <div className="space-y-3">
+                             <div>
+                               <label className="block text-surface-400 text-[10px] font-bold uppercase tracking-wider mb-2">2nd Place ($)</label>
+                               <input 
+                                 type="number" 
+                                 value={editSettings.payout_2nd_money_back ? editSettings.tournament_cost : editSettings.payout_2nd}
+                                 onChange={e => setEditSettings({...editSettings, payout_2nd: Math.round(parseFloat(e.target.value) || 0)})}
+                                 disabled={!isCommish || editSettings.payout_2nd_money_back}
+                                 className="w-full bg-surface-900 border border-surface-700 rounded-xl px-4 py-3 text-surface-100 disabled:opacity-50"
+                               />
+                             </div>
+                             <label className="flex items-center gap-2 cursor-pointer group">
+                               <input 
+                                 type="checkbox" 
+                                 checked={editSettings.payout_2nd_money_back}
+                                 onChange={e => setEditSettings({...editSettings, payout_2nd_money_back: e.target.checked})}
+                                 disabled={!isCommish}
+                                 className="w-4 h-4 rounded bg-surface-900 border-surface-700 text-primary-600 focus:ring-primary-500/50"
+                               />
+                               <span className="text-[10px] font-black uppercase tracking-tighter text-surface-500 group-hover:text-primary-400 transition-colors">Money Back</span>
+                             </label>
+                           </div>
+
+                           <div className="space-y-3">
+                             <div>
+                               <label className="block text-surface-400 text-[10px] font-bold uppercase tracking-wider mb-2">3rd Place ($)</label>
+                               <input 
+                                 type="number" 
+                                 value={editSettings.payout_3rd_money_back ? editSettings.tournament_cost : editSettings.payout_3rd}
+                                 onChange={e => setEditSettings({...editSettings, payout_3rd: Math.round(parseFloat(e.target.value) || 0)})}
+                                 disabled={!isCommish || editSettings.payout_3rd_money_back}
+                                 className="w-full bg-surface-900 border border-surface-700 rounded-xl px-4 py-3 text-surface-100 disabled:opacity-50"
+                               />
+                             </div>
+                             <label className="flex items-center gap-2 cursor-pointer group">
+                               <input 
+                                 type="checkbox" 
+                                 checked={editSettings.payout_3rd_money_back}
+                                 onChange={e => setEditSettings({...editSettings, payout_3rd_money_back: e.target.checked})}
+                                 disabled={!isCommish}
+                                 className="w-4 h-4 rounded bg-surface-900 border-surface-700 text-primary-600 focus:ring-primary-500/50"
+                               />
+                               <span className="text-[10px] font-black uppercase tracking-tighter text-surface-500 group-hover:text-primary-400 transition-colors">Money Back</span>
+                             </label>
+                           </div>
+                         </div>
+                       </div>
+
+                       {isCommish && (
+                         <div className="pt-4">
+                           <button 
+                             onClick={handleSaveCoreSettings}
+                             disabled={saveLoading}
+                             className="w-full bg-primary-600 hover:bg-primary-500 text-surface-900 font-black py-3 rounded-xl transition-all shadow-glow/20 disabled:opacity-50 uppercase tracking-widest text-sm"
+                           >
+                             {saveLoading ? 'Saving...' : 'Save Payout Settings'}
+                           </button>
+                         </div>
+                       )}
                      </div>
                    )}
 

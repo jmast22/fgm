@@ -14,6 +14,13 @@ export interface League {
   draft_cycle?: 'season' | 'tournament'
   trade_deadline?: string
   excluded_tournaments?: string[]
+  tournament_cost?: number
+  payout_1st?: number
+  payout_2nd?: number
+  payout_3rd?: number
+  payout_1st_remaining_pot?: boolean
+  payout_2nd_money_back?: boolean
+  payout_3rd_money_back?: boolean
   created_at?: string
   updated_at?: string
 }
@@ -528,5 +535,29 @@ export const leagueService = {
     ]
 
     return activity.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+  },
+
+  async finalizePayouts(leagueId: string, tournamentId: string, potSize: number, payoutData: any) {
+    const { data, error } = await supabase
+      .from('tournament_payout_history')
+      .upsert({
+        league_id: leagueId,
+        tournament_id: tournamentId,
+        pot_size: potSize,
+        payout_data: payoutData
+      }, { onConflict: 'league_id,tournament_id' })
+    
+    if (error) throw error
+    return data
+  },
+
+  async getPayoutHistory(leagueId: string) {
+    const { data, error } = await supabase
+      .from('tournament_payout_history')
+      .select('*')
+      .eq('league_id', leagueId)
+    
+    if (error) throw error
+    return data
   }
 }

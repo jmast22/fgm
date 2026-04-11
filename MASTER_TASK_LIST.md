@@ -367,3 +367,29 @@
 - [ ] **Course Intelligence**: Research and integrate course metadata (par, distance, course records, historical winners).
 - [ ] **Historical Context**: Display previous years' results for the same event where available.
 - [ ] **Tournament Media**: Add support for course maps or high-quality tournament-specific imagery.
+
+---
+
+## Phase 21 — Payouts Management ✅
+
+> **Goal:** Manage league fees and payouts for weekly winners with historical accuracy and rule-based logic.
+
+- [x] **Database Migration (Initial)**:
+    - [x] Add `tournament_cost`, `payout_1st`, `payout_2nd`, `payout_3rd` columns to `leagues` table.
+- [x] **Database Migration (Advanced)**:
+    - [x] Add `payout_2nd_money_back` and `payout_3rd_money_back` (BOOLEAN) to `leagues`.
+    - [x] Create `tournament_payout_history` table (id, league_id, tournament_id, pot_size, payout_data JSONB, created_at) to snapshot results.
+- [x] **League Settings (Payouts Sub-tab)**:
+    - [x] Add "Payouts" to the Settings sub-navigation.
+    - [x] Implement "Money Back" toggles for 2nd/3rd place (automatically locks payout amount to match entry fee).
+- [x] **Payouts Tab Implementation**:
+    - [x] Add "Payouts" to the main League Dashboard tab navigation.
+    - [x] Build `PayoutsTab.tsx` component with "Who Pays Who" instructions.
+- [x] **Advanced Payout Logic**:
+    - [x] **Context-Aware Pot Calculation**: Calculate tournament pot size based on `team_rosters` present for that specific tournament, rather than just current total league teams.
+    - [x] **Rule-Based Prizes**: Ensure math dynamically updates if "Money Back" rules are toggled.
+    - [x] **Finalize & Lock**: Allow commissioners to "Finalize Payouts" once a tournament is completed to save a permanent snapshot to `tournament_payout_history`.
+- [x] **Polish**:
+    - [x] Add visual "Paid" status markers (optionally, or just instructions).
+    - [x] Formatted currency display ($ USD) — **Whole numbers only (round accordingly, no decimals)**.
+    - [x] Historical view: Load data from history table if it exists for past tournaments.
