@@ -7,7 +7,7 @@ export interface GolferRoundScore {
   golfer_name: string
   round: number
   score: number | null  // strokes relative to par (e.g., -3, +2)
-  made_cut: boolean
+  made_cut: boolean | null
 }
 
 export interface GolferTournamentScore {
@@ -18,7 +18,7 @@ export interface GolferTournamentScore {
   r3: number | null
   r4: number | null
   total: number | null
-  made_cut: boolean
+  made_cut: boolean | null
   is_penalty: boolean
   rank?: number
   displayRank?: string
@@ -154,31 +154,12 @@ export const scoringService = {
     // Calculate penalties
     const penalty = this.calculateMissedCutPenalty(rawScores)
 
-    // Heuristic Cut Line Detection: 
-    // If some players have R3/R4 scores, identify the worst score among them to find the cut threshold.
-    let heuristicCutLine = -Infinity;
-    Object.values(byGolfer).forEach(data => {
-      if (data.rounds[3] !== null || data.rounds[4] !== null) {
-        const totalAfterR2 = (data.rounds[1] ?? 0) + (data.rounds[2] ?? 0);
-        heuristicCutLine = Math.max(heuristicCutLine, totalAfterR2);
-      }
-    });
-
     const results: GolferTournamentScore[] = Object.entries(byGolfer).map(([golferId, data]) => {
       const r1 = data.rounds[1] ?? null
       const r2 = data.rounds[2] ?? null
       let r3 = data.rounds[3] ?? null
       let r4 = data.rounds[4] ?? null
       let isPenalty = false
-
-      // Apply Heuristic: If we are past R2 and this player has no R3+ scores while others do,
-      // and their score is worse than the cut line, mark them as missed cut.
-      if (heuristicCutLine > -Infinity && r1 !== null && r2 !== null && r3 === null && r4 === null) {
-        const totalAfterR2 = r1 + r2;
-        if (totalAfterR2 > heuristicCutLine) {
-          data.made_cut = false;
-        }
-      }
 
       // If this golfer missed the cut, apply penalty scores for R3 and R4
       // We only apply this if made_cut is EXPLICITLY false.
