@@ -19,7 +19,9 @@ export interface GolferTournamentScore {
   r4: number | null
   total: number | null
   made_cut: boolean
-  is_penalty: boolean  // true if R3/R4 are penalty scores
+  is_penalty: boolean
+  rank?: number
+  displayRank?: string
 }
 
 export interface TeamTournamentScore {
@@ -31,6 +33,8 @@ export interface TeamTournamentScore {
   r4: number | null
   total: number | null
   golfer_scores: GolferTournamentScore[]
+  rank?: number
+  displayRank?: string
 }
 
 // ----- Scoring Service -----
@@ -182,7 +186,7 @@ export const scoringService = {
       return a.total - b.total
     })
 
-    return results
+    return applyRanking(results)
   },
 
   /**
@@ -279,14 +283,21 @@ export const scoringService = {
       return a.total - b.total
     })
 
-    return teamResults
+    return applyRanking(teamResults)
   },
 
   /**
    * Get season-long standings for a league.
    * Aggregates team totals across all non-excluded completed tournaments.
    */
-  async getSeasonStandings(leagueId: string, excludedTournaments: string[] = []): Promise<{ team_id: string; team_name: string; total: number; tournaments_played: number }[]> {
+  async getSeasonStandings(leagueId: string, excludedTournaments: string[] = []): Promise<{ 
+    team_id: string; 
+    team_name: string; 
+    total: number; 
+    tournaments_played: number;
+    rank: number;
+    displayRank: string;
+  }[]> {
     // Get all tournaments that have actual score data (regardless of status)
     const { data: scoredTournaments } = await supabase
       .from('golfer_round_stats')
@@ -414,9 +425,11 @@ export const scoringService = {
       })
     })
 
-    return Object.entries(teamTotals)
+    const standings = Object.entries(teamTotals)
       .map(([team_id, data]) => ({ team_id, ...data }))
       .sort((a, b) => a.total - b.total) // Most under par = best
+
+    return applyRanking(standings)
   },
 
   /**
@@ -470,7 +483,7 @@ export const scoringService = {
       })
     })
 
-    return Object.entries(golferAgg).map(([gid, agg]) => ({
+    const sortedGolfers = Object.entries(golferAgg).map(([gid, agg]) => ({
       golfer_id: gid,
       golfer_name: agg.golfer_name,
       r1: null,
@@ -480,7 +493,9 @@ export const scoringService = {
       total: agg.totalScore,
       made_cut: true,
       is_penalty: false
-    }))
+    })).sort((a, b) => (a.total ?? 999) - (b.total ?? 999))
+
+    return applyRanking(sortedGolfers)
   }
 }
 
@@ -503,3 +518,41 @@ export function scoreColor(score: number | null): string {
   if (score === 0) return 'text-surface-100'
   return 'text-red-400'
 }
+
+/**
+ * Utility to apply Standard Competition Ranking (1224) to a sorted list of scores.
+ */
+function applyRanking<T extends { total: number | null }>(items: T[]): (T & { rank: number; displayRank: string })[] {
+  if (items.length === 0) return []
+
+  const result: any[] = []
+  const rankCount: Record<number, number> = {}
+
+  let currentRank = 1
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i]
+    if (item.total === null) {
+      result.push({ ...item, rank: 999, displayRank: '—' })
+      continue
+    }
+
+    if (i > 0 && items[i - 1].total !== null && item.total === items[i - 1].total) {
+      // Same rank as previous
+    } else {
+      currentRank = i + 1
+    }
+    
+    const itemWithRank = { ...item, rank: currentRank }
+    result.push(itemWithRank)
+    rankCount[currentRank] = (rankCount[currentRank] || 0) + 1
+  }
+
+  // Second pass: add displayRank
+  for (const item of result) {
+    if (item.total === null) continue
+    item.displayRank = rankCount[item.rank] > 1 ? `T${item.rank}` : `${item.rank}`
+  }
+
+  return result
+}
+

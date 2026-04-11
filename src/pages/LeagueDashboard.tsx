@@ -123,8 +123,15 @@ export default function LeagueDashboard() {
         // Fetch standings in parallel (it's non-blocking for setting initial state but good to trigger now)
         scoringService.getSeasonStandings(l.id, l.excluded_tournaments || [])
           .then(standings => {
-            const standingsMap: Record<string, { total: number; tournaments_played: number }> = {}
-            standings.forEach(s => { standingsMap[s.team_id] = { total: s.total, tournaments_played: s.tournaments_played } })
+            const standingsMap: Record<string, { total: number; tournaments_played: number; rank: number; displayRank: string }> = {}
+            standings.forEach(s => { 
+              standingsMap[s.team_id] = { 
+                total: s.total, 
+                tournaments_played: s.tournaments_played,
+                rank: s.rank,
+                displayRank: s.displayRank
+              } 
+            })
             setSeasonStandings(standingsMap)
           })
           .catch(e => console.error('Failed to load standings:', e))
@@ -482,7 +489,7 @@ export default function LeagueDashboard() {
                         <div key={team.id} className="p-4 flex items-center justify-between hover:bg-surface-800/50 transition-colors group">
                           <div className="flex items-center gap-3">
                             <div className="w-7 h-7 rounded-lg bg-surface-900 border border-surface-700 flex items-center justify-center text-surface-500 font-display font-black text-[10px] group-hover:border-primary-500/30 group-hover:text-primary-400 transition-colors">
-                              {index + 1}
+                              {standing?.displayRank || index + 1}
                             </div>
                             <div>
                               <div className={`font-bold text-sm ${isPlaceholder ? 'text-surface-600 italic font-medium' : 'text-surface-100'}`}>

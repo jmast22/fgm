@@ -236,7 +236,7 @@ export default function LeaderboardTab({ league }: LeaderboardTabProps) {
                             ? 'bg-primary-600 border-primary-500 text-surface-900' 
                             : 'bg-surface-900 border-surface-700 text-surface-500 group-hover:border-primary-500/30 group-hover:text-primary-400'
                         }`}>
-                          {idx + 1}
+                          {team.displayRank}
                         </div>
                         <div className="pl-2">
                           <div className={`font-bold text-sm transition-colors truncate ${
@@ -338,7 +338,7 @@ export default function LeaderboardTab({ league }: LeaderboardTabProps) {
                         {/* Main Info Row */}
                         <div className="grid grid-cols-[auto_1fr_48px_24px] md:grid-cols-[auto_1fr_repeat(5,_minmax(40px,56px))_auto] items-center px-4 pt-3 pb-1 md:py-3">
                           <div className="w-7 h-7 rounded-lg bg-surface-900 border border-surface-700 flex items-center justify-center text-[10px] font-black text-surface-500 group-hover:border-primary-500/30 group-hover:text-primary-400 transition-colors">
-                            {idx + 1}
+                            {golfer.displayRank}
                           </div>
                           <div className="pl-2 min-w-0">
                             <div className="font-bold text-sm text-surface-100 group-hover:text-primary-400 transition-colors truncate flex items-center gap-2">

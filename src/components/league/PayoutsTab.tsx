@@ -20,6 +20,9 @@ interface TournamentPayout {
     p1_amount?: number
     p2_amount?: number
     p3_amount?: number
+    is_t1?: boolean
+    is_t2?: boolean
+    is_t3?: boolean
   }
   instructions: { payer: string; receiver: string; amount: number }[]
   isFromHistory?: boolean
@@ -73,36 +76,101 @@ export default function PayoutsTab({ league, teams, isCommish }: PayoutsTabProps
         }
 
         const board = await scoringService.getTeamLeaderboard(league.id, t.id)
-        const sorted = [...board].sort((a, b) => (a.total ?? 999) - (b.total ?? 999))
         
         // Settings / Rules
         const cost = league.tournament_cost || 0
         const pot = activeTeams.length * cost
         
-        const p2 = league.payout_2nd_money_back ? cost : (league.payout_2nd || 0)
-        const p3 = league.payout_3rd_money_back ? cost : (league.payout_3rd || 0)
+        // Group teams by rank (board is already sorted and ranked)
+        const byRank: Record<number, TeamTournamentScore[]> = {}
+        board.forEach(ts => {
+          if (!byRank[ts.rank!]) byRank[ts.rank!] = []
+          byRank[ts.rank!].push(ts)
+        })
+
+        const sortedRanks = Object.keys(byRank).map(Number).sort((a, b) => a - b)
         
-        // 1st place calculation
-        let p1 = league.payout_1st || 0
-        if (league.payout_1st_remaining_pot) {
-          p1 = Math.max(0, pot - (p2 + p3))
+        // Payout assignment
+        const payouts: Record<string, number> = {}
+        
+        // Determine 2nd and 3rd place prizes first if they aren't "remaining pot"
+        let totalP2 = 0
+        let totalP3 = 0
+
+        // Handle 2nd Place
+        const rank2Teams = byRank[sortedRanks.find(r => r === 2) || -1] || []
+        const isT1 = byRank[sortedRanks[0]]?.length > 1
+        
+        if (!isT1 && rank2Teams.length > 0) {
+          const p2Base = league.payout_2nd_money_back ? cost : (league.payout_2nd || 0)
+          if (league.payout_2nd_money_back) {
+            // Everyone tied for 2nd gets money back
+            rank2Teams.forEach(team => { payouts[team.team_id] = p2Base })
+            totalP2 = p2Base * rank2Teams.length
+          } else {
+            // Averaging rule for fixed 2nd place
+            // How many spots do they occupy? (2, 3...)
+            const spots = rank2Teams.length
+            const p3Base = league.payout_3rd_money_back ? cost : (league.payout_3rd || 0)
+            const combinedPrize = p2Base + (spots > 1 ? p3Base : 0)
+            const avg = Math.round(combinedPrize / spots)
+            rank2Teams.forEach(team => { payouts[team.team_id] = avg })
+            totalP2 = avg * rank2Teams.length
+            if (spots > 1) totalP3 = 0 // 3rd consumed
+          }
+        }
+
+        // Handle 3rd Place (if not already consumed)
+        const rank3Teams = byRank[sortedRanks.find(r => r === 3) || -1] || []
+        const occupiedBy2 = !isT1 && rank2Teams.length > 1
+        if (!isT1 && !occupiedBy2 && rank3Teams.length > 0) {
+          const p3Base = league.payout_3rd_money_back ? cost : (league.payout_3rd || 0)
+          const avg = Math.round((p3Base * rank3Teams.length) / rank3Teams.length) // Simplified
+          rank3Teams.forEach(team => { payouts[team.team_id] = p3Base })
+          totalP3 = p3Base * rank3Teams.length
+        }
+
+        // Handle 1st Place (The King)
+        const rank1Teams = byRank[sortedRanks[0]] || []
+        if (rank1Teams.length > 0) {
+          if (rank1Teams.length > 1) {
+            // T1 Tie: Always uses Averaging Rule across 1st, 2nd, and 3rd
+            const p1Base = league.payout_1st_remaining_pot ? (pot - 0) : (league.payout_1st || 0) // Pot if remaining
+            const p2Base = league.payout_2nd_money_back ? cost : (league.payout_2nd || 0)
+            const p3Base = league.payout_3rd_money_back ? cost : (league.payout_3rd || 0)
+            
+            const count = rank1Teams.length
+            let combined = p1Base
+            if (count >= 2) combined += p2Base
+            if (count >= 3) combined += p3Base
+            
+            const avg = Math.round(combined / count)
+            rank1Teams.forEach(team => { payouts[team.team_id] = avg })
+          } else {
+            // Single 1st Place
+            const team = rank1Teams[0]
+            if (league.payout_1st_remaining_pot) {
+              payouts[team.team_id] = Math.max(0, pot - (totalP2 + totalP3))
+            } else {
+              payouts[team.team_id] = league.payout_1st || 0
+            }
+          }
         }
 
         const winners = {
-          first: sorted[0] || null,
-          second: sorted[1] || null,
-          third: ((league.payout_3rd && league.payout_3rd > 0) || league.payout_3rd_money_back) ? (sorted[2] || null) : null,
-          p1_amount: p1,
-          p2_amount: p2,
-          p3_amount: p3
+          first: rank1Teams[0] ? { ...rank1Teams[0], team_name: rank1Teams.map(t => t.team_name).join(', ') } : null,
+          second: (!isT1 && rank2Teams.length > 0) ? { ...rank2Teams[0], team_name: rank2Teams.map(t => t.team_name).join(', ') } : null,
+          third: (!isT1 && rank2Teams.length === 1 && rank3Teams.length > 0) ? { ...rank3Teams[0], team_name: rank3Teams.map(t => t.team_name).join(', ') } : null,
+          p1_amount: payouts[rank1Teams[0]?.team_id] || 0,
+          p2_amount: payouts[rank2Teams[0]?.team_id] || 0,
+          p3_amount: payouts[rank3Teams[0]?.team_id] || 0,
+          is_t1: rank1Teams.length > 1,
+          is_t2: rank2Teams.length > 1,
+          is_t3: rank3Teams.length > 1
         }
 
         const nets: { name: string; net: number }[] = activeTeams.map(team => {
-          let received = 0
-          if (winners.first?.team_id === team.id) received = p1
-          else if (winners.second?.team_id === team.id) received = p2
-          else if (winners.third?.team_id === team.id) received = p3
-          
+          const received = payouts[team.id] || 0
           return { name: team.team_name, net: received - cost }
         })
 
@@ -276,39 +344,54 @@ export default function PayoutsTab({ league, teams, isCommish }: PayoutsTabProps
                                 <div className="flex items-center gap-3">
                                   <span className="text-xl">🥇</span>
                                   <div>
-                                    <div className="font-bold text-surface-50">{data.winners.first.team_name}</div>
-                                    <div className="text-[10px] text-primary-400 font-black uppercase">1st Place</div>
+                                    <div className="font-bold text-surface-50 break-words line-clamp-2">
+                                      {data.winners.first.team_name}
+                                    </div>
+                                    <div className="text-[10px] text-primary-400 font-black uppercase flex items-center gap-1.5">
+                                      {data.winners.is_t1 ? 'T1' : '1st'} Place
+                                      {data.winners.is_t1 && <span className="text-[8px] opacity-70 italic tracking-normal">(Tie)</span>}
+                                    </div>
                                   </div>
                                 </div>
-                                <div className="text-lg font-black text-primary-400">
+                                <div className="text-lg font-black text-primary-400 shrink-0">
                                   ${data.winners.p1_amount}
                                 </div>
                               </div>
                             )}
                             {data.winners.second && (
                               <div className="flex items-center justify-between p-3 bg-surface-800/50 border border-surface-700/50 rounded-xl">
-                                <div className="flex items-center gap-3">
-                                  <span className="text-xl">🥈</span>
-                                  <div>
-                                    <div className="font-bold text-surface-200">{data.winners.second.team_name}</div>
-                                    <div className="text-[10px] text-surface-500 font-black uppercase">2nd Place</div>
+                                <div className="flex items-center gap-3 min-w-0">
+                                  <span className="text-xl shrink-0">🥈</span>
+                                  <div className="min-w-0">
+                                    <div className="font-bold text-surface-200 break-words line-clamp-2">
+                                      {data.winners.second.team_name}
+                                    </div>
+                                    <div className="text-[10px] text-surface-500 font-black uppercase flex items-center gap-1.5">
+                                      {data.winners.is_t2 ? 'T2' : '2nd'} Place
+                                      {data.winners.is_t2 && <span className="text-[8px] opacity-70 italic tracking-normal">(Tie)</span>}
+                                    </div>
                                   </div>
                                 </div>
-                                <div className="text-lg font-black text-surface-200">
+                                <div className="text-lg font-black text-surface-200 shrink-0">
                                   ${data.winners.p2_amount}
                                 </div>
                               </div>
                             )}
                             {data.winners.third && (
                               <div className="flex items-center justify-between p-3 bg-surface-800/50 border border-surface-700/50 rounded-xl">
-                                <div className="flex items-center gap-3">
-                                  <span className="text-xl">🥉</span>
-                                  <div>
-                                    <div className="font-bold text-surface-300">{data.winners.third.team_name}</div>
-                                    <div className="text-[10px] text-surface-500 font-black uppercase">3rd Place</div>
+                                <div className="flex items-center gap-3 min-w-0">
+                                  <span className="text-xl shrink-0">🥉</span>
+                                  <div className="min-w-0">
+                                    <div className="font-bold text-surface-300 break-words line-clamp-2">
+                                      {data.winners.third.team_name}
+                                    </div>
+                                    <div className="text-[10px] text-surface-500 font-black uppercase flex items-center gap-1.5">
+                                      {data.winners.is_t3 ? 'T3' : '3rd'} Place
+                                      {data.winners.is_t3 && <span className="text-[8px] opacity-70 italic tracking-normal">(Tie)</span>}
+                                    </div>
                                   </div>
                                 </div>
-                                <div className="text-lg font-black text-surface-300">
+                                <div className="text-lg font-black text-surface-300 shrink-0">
                                   ${data.winners.p3_amount}
                                 </div>
                               </div>
