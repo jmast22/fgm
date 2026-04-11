@@ -218,7 +218,7 @@ export default function LeaderboardTab({ league }: LeaderboardTabProps) {
               </div>
 
               <div className="divide-y divide-surface-700/50 max-h-[600px] overflow-y-auto no-scrollbar">
-                {teamScores.length > 0 ? teamScores.map((team, idx) => {
+                {teamScores.length > 0 ? teamScores.map((team) => {
                   const isSelected = selectedTeamFilter === team.team_id
                   return (
                     <div
@@ -327,7 +327,7 @@ export default function LeaderboardTab({ league }: LeaderboardTabProps) {
               </div>
 
               <div className="divide-y divide-surface-700/50 max-h-[600px] overflow-y-auto no-scrollbar">
-                {displayGolfers.length > 0 ? displayGolfers.map((golfer, idx) => {
+                {displayGolfers.length > 0 ? displayGolfers.map((golfer) => {
                   const teamName = golferTeamMap[golfer.golfer_id]
                   return (
                     <div key={golfer.golfer_id} className="group">

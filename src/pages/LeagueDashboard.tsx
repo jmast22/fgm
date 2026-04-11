@@ -64,7 +64,12 @@ export default function LeagueDashboard() {
   const [editTeamNames, setEditTeamNames] = useState<Record<string, string>>({})
   const [editDraftOrder, setEditDraftOrder] = useState<string[]>([])
   const [settingsTab, setSettingsTab] = useState<'core' | 'scoring' | 'draft' | 'teams' | 'payouts'>('core')
-  const [seasonStandings, setSeasonStandings] = useState<Record<string, { total: number; tournaments_played: number }>>({})
+  const [seasonStandings, setSeasonStandings] = useState<Record<string, { 
+    total: number; 
+    tournaments_played: number;
+    rank: number;
+    displayRank: string;
+  }>>({})
   const [tournaments, setTournaments] = useState<Tournament[]>([])
   const [selectedTournamentId, setSelectedTournamentId] = useState<string>('')
   const [isRandomizing, setIsRandomizing] = useState(false)

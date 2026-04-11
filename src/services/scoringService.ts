@@ -309,7 +309,7 @@ export const scoringService = {
         .select('id, team_name')
         .eq('league_id', leagueId)
 
-      return (teams || []).map(t => ({ team_id: t.id, team_name: t.team_name, total: 0, tournaments_played: 0 }))
+      return applyRanking((teams || []).map(t => ({ team_id: t.id, team_name: t.team_name, total: 0, tournaments_played: 0 }))) as any
     }
 
     // Deduplicate tournament IDs and filter out excluded ones
@@ -321,7 +321,7 @@ export const scoringService = {
         .from('teams')
         .select('id, team_name')
         .eq('league_id', leagueId)
-      return (teams || []).map(t => ({ team_id: t.id, team_name: t.team_name, total: 0, tournaments_played: 0 }))
+      return applyRanking((teams || []).map(t => ({ team_id: t.id, team_name: t.team_name, total: 0, tournaments_played: 0 }))) as any
     }
 
     // 1. Get all teams in the league

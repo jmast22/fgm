@@ -125,7 +125,6 @@ export default function PayoutsTab({ league, teams, isCommish }: PayoutsTabProps
         const occupiedBy2 = !isT1 && rank2Teams.length > 1
         if (!isT1 && !occupiedBy2 && rank3Teams.length > 0) {
           const p3Base = league.payout_3rd_money_back ? cost : (league.payout_3rd || 0)
-          const avg = Math.round((p3Base * rank3Teams.length) / rank3Teams.length) // Simplified
           rank3Teams.forEach(team => { payouts[team.team_id] = p3Base })
           totalP3 = p3Base * rank3Teams.length
         }
