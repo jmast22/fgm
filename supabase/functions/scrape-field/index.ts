@@ -23,6 +23,8 @@ export interface FieldScrapeResult {
 
 function normalizeName(name: string): string {
   return name
+    .replace(/ø/ig, 'o')
+    .replace(/æ/ig, 'ae')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/[^\x00-\x7F]/g, '')

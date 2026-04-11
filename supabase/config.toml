@@ -404,7 +404,7 @@ s3_secret_key = "env(S3_SECRET_KEY)"
 
 [functions.scrape-odds]
 enabled = true
-verify_jwt = true
+verify_jwt = false
 import_map = "./functions/scrape-odds/deno.json"
 # Uncomment to specify a custom file path to the entrypoint.
 # Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
@@ -415,7 +415,7 @@ entrypoint = "./functions/scrape-odds/index.ts"
 
 [functions.scrape-scores]
 enabled = true
-verify_jwt = true
+verify_jwt = false
 import_map = "./functions/scrape-scores/deno.json"
 # Uncomment to specify a custom file path to the entrypoint.
 # Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
@@ -426,7 +426,7 @@ entrypoint = "./functions/scrape-scores/index.ts"
 
 [functions.scrape-field]
 enabled = true
-verify_jwt = true
+verify_jwt = false
 import_map = "./functions/scrape-field/deno.json"
 # Uncomment to specify a custom file path to the entrypoint.
 # Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx

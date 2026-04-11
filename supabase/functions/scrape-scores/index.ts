@@ -4,7 +4,7 @@
 // Runs SERVER-SIDE — securely fetches and processes data on a cron schedule or via manual trigger.
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -77,8 +77,11 @@ interface ESPNScoreboard {
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
-function normalizeName(name: string): string {
+function normalizeName(name: string | null | undefined): string {
+  if (!name || typeof name !== 'string') return '';
   return name
+    .replace(/\u00f8/ig, 'o')
+    .replace(/\u00e6/ig, 'ae')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/[^\x00-\x7F]/g, '')
@@ -230,7 +233,6 @@ const corsHeaders = {
 }
 
 // ── Main Handler ──────────────────────────────────────────────────────
-
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
@@ -255,8 +257,14 @@ Deno.serve(async (req) => {
       // Ignore — means it's likely a cron run
     }
 
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!
-    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')
+    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+    
+    if (!supabaseUrl || !supabaseServiceKey) {
+      throw new Error('Missing environment variables SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY')
+    }
+    
+    console.log('🔗 Initializing Supabase client...')
     const supabase = createClient(supabaseUrl, supabaseServiceKey)
 
     console.log('🏌️ Fetching ESPN scoreboard...')
