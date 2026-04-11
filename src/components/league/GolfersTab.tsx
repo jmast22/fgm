@@ -16,7 +16,7 @@ interface GolferWithStats {
   name: string
   age: number
   owg_rank: number
-  total_score: number
+  total_score: number | null
   tournaments_played: number
   is_rostered: boolean
   rostered_team?: string
@@ -208,7 +208,7 @@ export default function GolfersTab({ league, teams }: GolfersTabProps) {
           name: g.name,
           age: g.age,
           owg_rank: golferRanks[g.id] ?? 9999,
-          total_score: stats?.totalScore ?? 0,
+          total_score: stats?.totalScore ?? null,
           tournaments_played: stats?.tournaments.size ?? 0,
           is_rostered: !!teamName,
           rostered_team: teamName,

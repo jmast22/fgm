@@ -12,7 +12,7 @@ interface ScheduleTabProps {
 }
 
 interface TournamentResults {
-  winner: { team_name: string; score: number } | null
+  winner: { team_name: string; score: number | null } | null
   allTeams: TeamTournamentScore[]
 }
 
