@@ -71,7 +71,7 @@ export const scoringService = {
    */
   calculateMissedCutPenalty(
     allScores: { golfer_id: string; round: number; score: number | null; made_cut: boolean }[]
-  ): { r3Penalty: number; r4Penalty: number | null } {
+  ): { r3Penalty: number; r4Penalty: number } {
     // Get golfers who made the cut (explicitly marked true AND not marked false in any other record)
     const possibleCutMakers = new Set<string>()
     const confirmedMissedCuts = new Set<string>()
@@ -105,9 +105,19 @@ export const scoringService = {
     const r3Sum = worstTenR3.reduce((a, b) => a + b, 0)
     const r3Avg = worstTenR3.length > 0 ? Math.round(r3Sum / worstTenR3.length) : 4
 
+    // Calculate average for Round 4 (same logic)
+    const r4Scores = allScores
+      .filter(s => s.round === 4 && s.score !== null && cutMakerIds.has(s.golfer_id))
+      .map(s => s.score as number)
+      .sort((a, b) => b - a)
+    
+    const worstTenR4 = r4Scores.slice(0, 10)
+    const r4Sum = worstTenR4.reduce((a, b) => a + b, 0)
+    const r4Avg = worstTenR4.length > 0 ? Math.round(r4Sum / worstTenR4.length) : 4
+
     return {
       r3Penalty: Math.max(r3Avg, 4),
-      r4Penalty: null // Round 4 penalty is deferred until the round is fully completed
+      r4Penalty: Math.max(r4Avg, 4)
     }
   },
 
@@ -182,9 +192,9 @@ export const scoringService = {
 
       // If this golfer missed the cut, apply penalty scores for R3 and R4
       // We only apply this if made_cut is EXPLICITLY false.
-      if (data.made_cut === false) {
+      if (!data.made_cut) {
         r3 = penalty.r3Penalty
-        r4 = null // Do not apply R4 penalty yet per user instructions
+        r4 = penalty.r4Penalty
         isPenalty = true
       }
 

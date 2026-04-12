@@ -189,7 +189,7 @@ export default function GolfersTab({ league, teams }: GolfersTabProps) {
 
             if (!data.made_cut) {
               r3 = penalty.r3Penalty
-              r4 = penalty.r4Penalty ?? 0
+              r4 = penalty.r4Penalty
             }
 
             golferStats[gid].totalScore += r1 + r2 + r3 + r4
