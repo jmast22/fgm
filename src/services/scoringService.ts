@@ -72,51 +72,54 @@ export const scoringService = {
   calculateMissedCutPenalty(
     allScores: { golfer_id: string; round: number; score: number | null; made_cut: boolean }[]
   ): { r3Penalty: number; r4Penalty: number } {
-    // Get golfers who made the cut
-    const cutMakers = new Set<string>()
-    allScores.forEach(s => {
-      if (s.made_cut) cutMakers.add(s.golfer_id)
-    })
-
-    // Build per-golfer round data for cut-makers
-    const golferRounds: Record<string, Record<number, number>> = {}
-    allScores.forEach(s => {
-      if (!cutMakers.has(s.golfer_id) || s.score === null) return
-      if (!golferRounds[s.golfer_id]) golferRounds[s.golfer_id] = {}
-      golferRounds[s.golfer_id][s.round] = s.score
-    })
-
-    // Calculate 2-round totals (R1 + R2) for cut-makers
-    const twoRoundTotals: { golfer_id: string; total: number }[] = []
-    Object.entries(golferRounds).forEach(([gid, rounds]) => {
-      const r1 = rounds[1] ?? 0
-      const r2 = rounds[2] ?? 0
-      twoRoundTotals.push({ golfer_id: gid, total: r1 + r2 })
-    })
-
-    // Sort descending (worst first = highest scores to par)
-    twoRoundTotals.sort((a, b) => b.total - a.total)
-
-    // Take the 10 worst
-    const worstTen = twoRoundTotals.slice(0, 10)
-    const worstTenIds = new Set(worstTen.map(w => w.golfer_id))
-
-    // Calculate average R3 and R4 for the worst 10
-    let r3Sum = 0, r3Count = 0
-    let r4Sum = 0, r4Count = 0
+    // Get golfers who made the cut (explicitly marked true AND not marked false in any other record)
+    const possibleCutMakers = new Set<string>()
+    const confirmedMissedCuts = new Set<string>()
 
     allScores.forEach(s => {
-      if (!worstTenIds.has(s.golfer_id) || s.score === null) return
-      if (s.round === 3) { r3Sum += s.score; r3Count++ }
-      if (s.round === 4) { r4Sum += s.score; r4Count++ }
+      if (s.made_cut === true) possibleCutMakers.add(s.golfer_id)
+      if (s.made_cut === false) confirmedMissedCuts.add(s.golfer_id)
+      // Heuristic for penalty calc: if R3 has scores but this golfer doesn't, they are a missed cut.
+      // We'll calculate current max round here too.
     })
 
-    const r3Avg = r3Count > 0 ? Math.round(r3Sum / r3Count) : 4
-    const r4Avg = r4Count > 0 ? Math.round(r4Sum / r4Count) : 4
+    const maxRound = Math.max(...allScores.filter(s => s.score !== null).map(s => s.round), 0)
+    
+    // Finalize cut makers list
+    const cutMakerIds = new Set<string>()
+    const golfersWithR3 = new Set(allScores.filter(s => s.round === 3 && s.score !== null).map(s => s.golfer_id))
+
+    possibleCutMakers.forEach(gid => {
+      if (confirmedMissedCuts.has(gid)) return
+      if (maxRound >= 3 && !golfersWithR3.has(gid)) return // Heuristic
+      cutMakerIds.add(gid)
+    })
+
+    // Calculate average for Round 3
+    const r3Scores = allScores
+      .filter(s => s.round === 3 && s.score !== null && cutMakerIds.has(s.golfer_id))
+      .map(s => s.score as number)
+      .sort((a, b) => b - a)
+    
+    const worstTenR3 = r3Scores.slice(0, 10)
+    const r3Sum = worstTenR3.reduce((a, b) => a + b, 0)
+    const r3Avg = worstTenR3.length > 0 ? Math.round(r3Sum / worstTenR3.length) : 4
+
+    // Calculate average for Round 4 (same logic)
+    const r4Scores = allScores
+      .filter(s => s.round === 4 && s.score !== null && cutMakerIds.has(s.golfer_id))
+      .map(s => s.score as number)
+      .sort((a, b) => b - a)
+    
+    // We only apply Round 4 penalty if at least 50 players have finished (arbitrary threshold to ensure it's "mostly" done)
+    // or if the user/system triggers completion. For now, we return null until R4 is fully concluded.
+    const worstTenR4 = r4Scores.slice(0, 10)
+    const r4Sum = worstTenR4.reduce((a, b) => a + b, 0)
+    const r4Avg = worstTenR4.length > 0 ? Math.round(r4Sum / worstTenR4.length) : 4
 
     return {
       r3Penalty: Math.max(r3Avg, 4),
-      r4Penalty: Math.max(r4Avg, 4)
+      r4Penalty: null // Round 4 penalty is deferred until the round is fully completed
     }
   },
 
@@ -133,6 +136,14 @@ export const scoringService = {
       rounds: Record<number, number | null>
     }> = {}
 
+    // 1. Determine current tournament progress (max round seen with a score)
+    let maxRoundWithScores = 0
+    rawScores.forEach(s => {
+      if (s.score !== null && s.round > maxRoundWithScores) {
+        maxRoundWithScores = s.round
+      }
+    })
+
     rawScores.forEach(s => {
       if (!byGolfer[s.golfer_id]) {
         byGolfer[s.golfer_id] = {
@@ -141,7 +152,10 @@ export const scoringService = {
           rounds: {}
         }
       }
-      byGolfer[s.golfer_id].rounds[s.round] = s.score
+      if (s.score !== null) {
+        byGolfer[s.golfer_id].rounds[s.round] = s.score
+      }
+      
       // If any round record says they missed the cut, we mark it false globally for the golfer.
       // We prioritize the false status (confirmed missed cut).
       if (s.made_cut === false) byGolfer[s.golfer_id].made_cut = false;
@@ -150,6 +164,23 @@ export const scoringService = {
         byGolfer[s.golfer_id].made_cut = true;
       }
     })
+
+    // 2. Apply Heuristic Missed Cut Detection
+    // If the tournament has progressed to Round 3 or 4, but a golfer only has scores for R1/R2,
+    // and they aren't already marked as having missed the cut, we mark them now.
+    if (maxRoundWithScores >= 3) {
+      Object.entries(byGolfer).forEach(([id, data]) => {
+        // If they have R1 & R2 but no R3 (and tournament is at or past R3)
+        const hasR1 = data.rounds[1] !== undefined && data.rounds[1] !== null
+        const hasR2 = data.rounds[2] !== undefined && data.rounds[2] !== null
+        const hasR3 = data.rounds[3] !== undefined && data.rounds[3] !== null
+        
+        if (hasR1 && hasR2 && !hasR3 && data.made_cut !== false) {
+           // HEURISTIC: No R3 score while others have one = Missed Cut
+           data.made_cut = false
+        }
+      })
+    }
 
     // Calculate penalties
     const penalty = this.calculateMissedCutPenalty(rawScores)
@@ -165,7 +196,7 @@ export const scoringService = {
       // We only apply this if made_cut is EXPLICITLY false.
       if (data.made_cut === false) {
         r3 = penalty.r3Penalty
-        r4 = penalty.r4Penalty
+        r4 = null // Do not apply R4 penalty yet per user instructions
         isPenalty = true
       }
 

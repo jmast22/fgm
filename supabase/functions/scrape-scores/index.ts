@@ -374,7 +374,9 @@ Deno.serve(async (req) => {
     }
 
     if (roundStatsUpserted > 0) {
-      const newStatus = tournamentRound >= 4 ? 'completed' : 'active'
+      const eventStatus = espnEvent.competitions?.[0]?.status?.type?.state || 'in'
+      const newStatus = eventStatus === 'post' ? 'completed' : 'active'
+      
       await supabase
         .from('tournaments')
         .update({ status: newStatus })
