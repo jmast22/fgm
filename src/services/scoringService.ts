@@ -71,7 +71,7 @@ export const scoringService = {
    */
   calculateMissedCutPenalty(
     allScores: { golfer_id: string; round: number; score: number | null; made_cut: boolean }[]
-  ): { r3Penalty: number; r4Penalty: number } {
+  ): { r3Penalty: number; r4Penalty: number | null } {
     // Get golfers who made the cut (explicitly marked true AND not marked false in any other record)
     const possibleCutMakers = new Set<string>()
     const confirmedMissedCuts = new Set<string>()
@@ -104,18 +104,6 @@ export const scoringService = {
     const worstTenR3 = r3Scores.slice(0, 10)
     const r3Sum = worstTenR3.reduce((a, b) => a + b, 0)
     const r3Avg = worstTenR3.length > 0 ? Math.round(r3Sum / worstTenR3.length) : 4
-
-    // Calculate average for Round 4 (same logic)
-    const r4Scores = allScores
-      .filter(s => s.round === 4 && s.score !== null && cutMakerIds.has(s.golfer_id))
-      .map(s => s.score as number)
-      .sort((a, b) => b - a)
-    
-    // We only apply Round 4 penalty if at least 50 players have finished (arbitrary threshold to ensure it's "mostly" done)
-    // or if the user/system triggers completion. For now, we return null until R4 is fully concluded.
-    const worstTenR4 = r4Scores.slice(0, 10)
-    const r4Sum = worstTenR4.reduce((a, b) => a + b, 0)
-    const r4Avg = worstTenR4.length > 0 ? Math.round(r4Sum / worstTenR4.length) : 4
 
     return {
       r3Penalty: Math.max(r3Avg, 4),
@@ -169,7 +157,7 @@ export const scoringService = {
     // If the tournament has progressed to Round 3 or 4, but a golfer only has scores for R1/R2,
     // and they aren't already marked as having missed the cut, we mark them now.
     if (maxRoundWithScores >= 3) {
-      Object.entries(byGolfer).forEach(([id, data]) => {
+      Object.entries(byGolfer).forEach(([_id, data]) => {
         // If they have R1 & R2 but no R3 (and tournament is at or past R3)
         const hasR1 = data.rounds[1] !== undefined && data.rounds[1] !== null
         const hasR2 = data.rounds[2] !== undefined && data.rounds[2] !== null
